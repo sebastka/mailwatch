@@ -26,7 +26,7 @@ jobs:
     # `docker buildx imagetools inspect <image:tag>`.
     services:
       mariadb:
-        image: mariadb:11.4@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6
+        image: mariadb:12.3@sha256:2bdff1534a7e569fecaf4b10b66ad0d410806e382d9db29ba305448addda97c4
         env:
           MARIADB_ROOT_PASSWORD: ci-root
         ports: ['3306:3306']
