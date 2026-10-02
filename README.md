@@ -141,22 +141,24 @@ message bodies.
 
 ### Checks, alerts and the rest
 
-| Variable                                                      | Default                                              |                                                                               |
-| ------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `CHECK_INTERVAL_MINUTES` / `CHECK_CONCURRENCY`                | `15` / `4`                                           | `0` = manual only                                                             |
-| `REPORT_SYNC_INTERVAL_MINUTES`                                | `30`                                                 |                                                                               |
-| `REPORT_ANALYSIS_DAYS`                                        | `7`                                                  | window of the report-based alerts                                             |
-| `DNS_RESOLVERS`                                               | `1.1.1.1,8.8.8.8`                                    | must validate DNSSEC; `system` = the OS resolvers                             |
-| `SMTP_PROBE` / `SMTP_HELO_NAME`                               | `true` / the `PUBLIC_URL` host                       |                                                                               |
-| `CERT_WARN_DAYS`                                              | `21`                                                 | expiry warning; within 7 days an error                                        |
-| `DKIM_COMMON_SELECTORS`                                       | `default,dkim,mail,selector1,selector2,…`            | empty = only configured and observed ones                                     |
-| `DNSBL_ZONES` / `DNSBL_DOMAIN_ZONES`                          | Spamhaus ZEN, SpamCop, PSBL, Mailspike / DBL, SURBL  | Spamhaus and SURBL refuse public resolvers: shown as "unknown"                |
-| `ALERT_CONFIRMATIONS`                                         | `2`                                                  | consecutive checks a finding must be seen in before it alerts                 |
-| `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`    | –                                                    | optional                                                                      |
-| `TIMEZONE`                                                    | `UTC`                                                | times in the UI, in alerts and of quiet hours                                 |
-| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `127.0.0.1` / `3306` / `mailwatch` / – / `mailwatch` | schema is created at startup                                                  |
-| `LISTEN_HOST` / `PORT`                                        | `127.0.0.1` / `3000`                                 | `0.0.0.0` in containers                                                       |
-| `PUBLIC_URL`, `OIDC_*`, `SESSION_TTL_HOURS`                   | –                                                    | as in tlsrpt/zdwatch; `OIDC_EDITOR_GROUPS` may change settings and send tests |
+| Variable                                                      | Default                                              |                                                                                                          |
+| ------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `CHECK_INTERVAL_MINUTES` / `CHECK_CONCURRENCY`                | `15` / `4`                                           | `0` = manual only                                                                                        |
+| `REPORT_SYNC_INTERVAL_MINUTES`                                | `30`                                                 |                                                                                                          |
+| `REPORT_ANALYSIS_DAYS`                                        | `7`                                                  | window of the report-based alerts                                                                        |
+| `DNS_RESOLVERS`                                               | `1.1.1.1,8.8.8.8`                                    | must validate DNSSEC; `system` = the OS resolvers                                                        |
+| `SMTP_PROBE` / `SMTP_HELO_NAME`                               | `true` / the `PUBLIC_URL` host                       |                                                                                                          |
+| `CERT_WARN_DAYS`                                              | `21`                                                 | expiry warning; within 7 days an error                                                                   |
+| `DKIM_COMMON_SELECTORS`                                       | `default,dkim,mail,selector1,selector2,…`            | empty = only configured and observed ones                                                                |
+| `DNSBL_ZONES` / `DNSBL_DOMAIN_ZONES`                          | Spamhaus ZEN, SpamCop, PSBL, Mailspike / DBL, SURBL  | Spamhaus and SURBL refuse public resolvers: shown as "unknown"                                           |
+| `DNSBL_RESOLVERS`                                             | `DNS_RESOLVERS`                                      | resolvers for the blocklist lookups only, e.g. your own recursive resolver (Unbound); `system` works too |
+| `SPAMHAUS_DQS_KEY`                                            | –                                                    | Spamhaus Data Query Service key: Spamhaus zones are queried through DQS; the key is never shown          |
+| `ALERT_CONFIRMATIONS`                                         | `2`                                                  | consecutive checks a finding must be seen in before it alerts                                            |
+| `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`    | –                                                    | optional                                                                                                 |
+| `TIMEZONE`                                                    | `UTC`                                                | times in the UI, in alerts and of quiet hours                                                            |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `127.0.0.1` / `3306` / `mailwatch` / – / `mailwatch` | schema is created at startup                                                                             |
+| `LISTEN_HOST` / `PORT`                                        | `127.0.0.1` / `3000`                                 | `0.0.0.0` in containers                                                                                  |
+| `PUBLIC_URL`, `OIDC_*`, `SESSION_TTL_HOURS`                   | –                                                    | as in tlsrpt/zdwatch; `OIDC_EDITOR_GROUPS` may change settings and send tests                            |
 
 **Alerts:** a warning or error opens an alert once it is seen in `ALERT_CONFIRMATIONS`
 consecutive checks, and resolves as soon as it is gone. A check whose DNS lookup failed keeps

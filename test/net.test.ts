@@ -82,9 +82,23 @@ test('pipelined replies that arrive before they are awaited are not lost', async
   }
 });
 
-test('HTTPS fetches of URLs from DNS refuse internal addresses', async () => {
+test('HTTPS fetches resolve through DNS_RESOLVERS (not the OS resolver) and refuse internal addresses', async () => {
   const { httpsGet } = await import('../src/server/checks/util.ts');
-  await assert.rejects(httpsGet('https://localhost:1/', 2000), /non-public address \((127\.0\.0\.1|::1)\)/);
-  await assert.rejects(httpsGet('https://127.0.0.1:1/', 2000), /non-public address/);
-  await assert.rejects(httpsGet('http://example.com/', 2000), /not an https/);
+  const { FakeDns } = await import('./helpers.ts');
+  // Names only the fake resolver knows: if the OS resolver were used, these would not resolve.
+  const dns = new FakeDns({
+    'mta-sts.internal.test A': ['192.168.2.2'],
+    'mta-sts.v6.test AAAA': ['fd00::2'],
+    'mta-sts.broken.test A': { rcode: 'SERVFAIL' },
+    'mta-sts.empty.test TXT': ['no address'],
+    'localhost A': ['127.0.0.1'],
+  });
+  await assert.rejects(httpsGet('https://mta-sts.internal.test/', dns, 2000), /non-public address \(192\.168\.2\.2\)/);
+  await assert.rejects(httpsGet('https://mta-sts.v6.test/', dns, 2000), /non-public address \(fd00::2\)/);
+  await assert.rejects(httpsGet('https://mta-sts.broken.test/', dns, 2000), /cannot resolve mta-sts\.broken\.test/);
+  await assert.rejects(httpsGet('https://mta-sts.empty.test/', dns, 2000), /has no address/);
+  await assert.rejects(httpsGet('https://localhost:1/', dns, 2000), /non-public address \(127\.0\.0\.1\)/);
+  await assert.rejects(httpsGet('https://127.0.0.1:1/', dns, 2000), /non-public address/);
+  await assert.rejects(httpsGet('http://example.com/', dns, 2000), /not an https/);
+  assert.ok(dns.asked.includes('mta-sts.internal.test A'));
 });

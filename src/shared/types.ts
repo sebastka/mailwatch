@@ -799,7 +799,7 @@ export interface Status {
   mailboxes: MailboxStatus[];
   recipients: RecipientStatus[];
   telegram: { configured: boolean; lastError: string | null; quiet: boolean };
-  dns: { resolvers: string[] };
+  dns: { resolvers: string[]; blocklistResolvers: string[]; spamhausDqs: boolean };
   smtpProbe: boolean;
 }
 

@@ -312,3 +312,53 @@ test('small helpers', () => {
   assert.equal(isNonPublicIp('::ffff:10.0.0.5'), true);
   assert.equal(isNonPublicIp('192.0.2.1'), false);
 });
+
+test('blocklists: own resolver, Spamhaus DQS, and the key never shows', async () => {
+  const key = 'abcdefghijklmnopqrstuvwxyz';
+  const { runDomainChecks } = await import('../src/server/checks/index.ts');
+  const { queryZone } = await import('../src/server/checks/dnsbl.ts');
+  const { FakeDns, checksConfig } = await import('./helpers.ts');
+  assert.equal(queryZone('zen.spamhaus.org', key), `${key}.zen.dq.spamhaus.net`);
+  assert.equal(queryZone('dbl.spamhaus.org', key), `${key}.dbl.dq.spamhaus.net`);
+  assert.equal(queryZone('zen.spamhaus.org', null), 'zen.spamhaus.org');
+  assert.equal(queryZone('bl.spamcop.net', key), 'bl.spamcop.net');
+
+  // The checks' resolver knows the domain; only the blocklist resolver knows the listings.
+  const checks = new FakeDns({
+    'example.com MX': [{ preference: 10, exchange: 'mx.example.com' }],
+    'mx.example.com A': ['192.0.2.25'],
+  });
+  const lists = new FakeDns({
+    [`25.2.0.192.${key}.zen.dq.spamhaus.net A`]: ['127.0.0.4'],
+    [`example.com.${key}.dbl.dq.spamhaus.net A`]: ['127.255.255.252'],
+    '25.2.0.192.bl.spamcop.net A': ['127.0.0.2'],
+    '25.2.0.192.bl.spamcop.net TXT': ['Blocked - see spamcop'],
+  });
+  const cfg = {
+    ...checksConfig(),
+    ipZones: ['zen.spamhaus.org', 'bl.spamcop.net'],
+    domainZones: ['dbl.spamhaus.org'],
+    spamhausDqsKey: key,
+  };
+  const results = await runDomainChecks({ name: 'example.com', dkimSelectors: [], senderIps: [] }, cfg, {
+    dns: checks,
+    blocklistDns: lists,
+  });
+  const bl = results.find((r) => r.check === 'dnsbl')!;
+  assert.deepEqual(
+    bl.findings.map((f) => [f.code, f.subject]),
+    [
+      ['dnsbl.listed', '192.0.2.25 zen.spamhaus.org'],
+      ['dnsbl.listed', '192.0.2.25 bl.spamcop.net'],
+      ['dnsbl.refused', 'dbl.spamhaus.org'],
+    ],
+  );
+  assert.match(bl.findings[0]!.detail, /XBL/);
+  assert.match(bl.findings[2]!.detail, /DQS refused the queries/);
+  assert.ok(!JSON.stringify(results).includes(key), 'the DQS key never appears in results');
+  assert.ok(
+    !checks.asked.some((q) => q.includes('spamhaus') || q.includes('spamcop')),
+    'blocklists use their own resolver',
+  );
+  assert.ok(!lists.asked.some((q) => q.startsWith('example.com MX')), 'the other checks do not');
+});

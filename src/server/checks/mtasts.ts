@@ -125,7 +125,7 @@ export async function checkMtaSts(ctx: CheckContext): Promise<CheckResult<MtaSts
 
   // The policy, over HTTPS with a valid certificate and without redirects (§3.3).
   try {
-    const res = await httpsGet(policyUrl, ctx.cfg.httpTimeoutMs, 64 * 1024);
+    const res = await httpsGet(policyUrl, dns, ctx.cfg.httpTimeoutMs, 64 * 1024);
     data.fetch = {
       status: res.status,
       contentType: res.contentType,

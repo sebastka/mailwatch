@@ -23,6 +23,17 @@ const SPAMHAUS: Record<string, string> = {
  */
 export const isRefusal = (code: string) => code.startsWith('127.255.255.') || code === '127.0.0.1';
 
+/**
+ * The zone actually queried. With a Spamhaus DQS key, Spamhaus zones go through the Data Query
+ * Service (zen.spamhaus.org → <key>.zen.dq.spamhaus.net), which answers via any resolver.
+ * Findings and the UI keep the public zone name, so the key is never shown or stored.
+ */
+export function queryZone(zone: string, dqsKey: string | null): string {
+  const m = /^(.+)\.spamhaus\.org$/i.exec(zone);
+  return dqsKey && m ? `${dqsKey}.${m[1]}.dq.spamhaus.net` : zone;
+}
+
+/** Looks up `name` (built with the queried zone); the listing carries the public `zone` name. */
 export async function lookupList(dns: DnsClient, name: string, zone: string): Promise<DnsblListing> {
   const r = await dns.a(name);
   const out: DnsblListing = { zone, listed: false, refused: false, codes: [], reason: null };
@@ -47,7 +58,9 @@ export async function lookupList(dns: DnsClient, name: string, zone: string): Pr
 export async function checkDnsbl(ctx: CheckContext): Promise<CheckResult<DnsblData>> {
   const started = performance.now();
   const f = new Findings();
-  const { dns, domain, cfg } = ctx;
+  const { domain, cfg } = ctx;
+  const dns = ctx.blocklistDns;
+  const qz = (z: string) => queryZone(z, cfg.spamhausDqsKey);
 
   const sources = new Map<string, Set<string>>();
   const add = (ip: string, src: string) => {
@@ -63,9 +76,9 @@ export async function checkDnsbl(ctx: CheckContext): Promise<CheckResult<DnsblDa
   data.ips = await mapLimit([...sources.entries()], 4, async ([ip, src]) => ({
     ip,
     sources: [...src],
-    listings: await Promise.all(cfg.ipZones.map((z) => lookupList(dns, reverseName(ip, z), z))),
+    listings: await Promise.all(cfg.ipZones.map((z) => lookupList(dns, reverseName(ip, qz(z)), z))),
   }));
-  const domainListings = await Promise.all(cfg.domainZones.map((z) => lookupList(dns, `${domain.name}.${z}`, z)));
+  const domainListings = await Promise.all(cfg.domainZones.map((z) => lookupList(dns, `${domain.name}.${qz(z)}`, z)));
   data.ips.push({ ip: domain.name, sources: ['domain'], listings: domainListings });
 
   const refusedZones = new Set<string>();
@@ -91,7 +104,9 @@ export async function checkDnsbl(ctx: CheckContext): Promise<CheckResult<DnsblDa
     f.info(
       'dnsbl.refused',
       `${z} did not answer the queries`,
-      'Many lists refuse queries through public resolvers (DNS_RESOLVERS). Use your own recursive resolver, a list subscription, or remove the zone from DNSBL_ZONES.',
+      queryZone(z, cfg.spamhausDqsKey) !== z
+        ? 'Spamhaus DQS refused the queries: check SPAMHAUS_DQS_KEY and the usage limits of your account.'
+        : `Many lists refuse queries through big public resolvers. Point DNSBL_RESOLVERS at your own recursive resolver${/spamhaus\.org$/i.test(z) ? ', set SPAMHAUS_DQS_KEY' : ''}, or remove the zone from DNSBL_ZONES / DNSBL_DOMAIN_ZONES.`,
       { subject: z, refs: [ref('rfc5782', '2.1')] },
     );
   }

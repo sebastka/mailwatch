@@ -59,8 +59,16 @@ Not done (see "Ideas not implemented" at the end).
 - **Default resolvers: Cloudflare and Google (`1.1.1.1,8.8.8.8`)**, because they validate DNSSEC.
   The OS resolver often does not (systemd-resolved, Docker's embedded DNS). `DNS_RESOLVERS=system`
   uses the OS resolvers.
-- **Downside:** Spamhaus and SURBL refuse queries from public resolvers. Those lists then show
-  "unknown" with an info finding. Use your own validating resolver to get them.
+- **Blocklists have their own resolvers:** Spamhaus and SURBL refuse queries that reach them
+  through big public resolvers (shown as "unknown" with an info finding, never as "listed").
+  `DNSBL_RESOLVERS` sends **only the blocklist lookups** to other resolvers, e.g. an own
+  recursive Unbound, while every other check keeps the public, validating view of
+  `DNS_RESOLVERS`. Setting `DNS_RESOLVERS=system` instead would be wrong behind a split-horizon
+  resolver (the checks would see internal addresses) and often loses the DNSSEC AD flag.
+- **Spamhaus DQS:** with `SPAMHAUS_DQS_KEY`, Spamhaus zones are queried as
+  `<key>.<zone>.dq.spamhaus.net`, which works through any resolver. Findings, the database, the
+  UI and logs keep the public zone name (`zen.spamhaus.org`), so the key is never shown to
+  dashboard users; the Status tab only says whether DQS is on. Keep the key in a Secret.
 
 ### D5. Latest results, not a time series of checks
 
@@ -240,6 +248,13 @@ Not done (see "Ideas not implemented" at the end).
 - MTA-STS and BIMI fetch URLs derived from DNS (`https://mta-sts.<domain>/…`, BIMI `l=`/`a=`),
   for the configured domains only, without following redirects, with a timeout and a size
   limit. Certificates are validated in code so that an invalid one can be reported.
+- **One DNS view for everything:** these fetches resolve the host through `DNS_RESOLVERS` (the
+  checks' `DnsClient`), not the OS resolver, exactly like the MX probe. Behind a split-horizon
+  resolver (e.g. kube-dns forwarding to a LAN resolver that answers internal addresses), the
+  OS view gave `mta-sts.<domain>` a private address, which the guard then refused: a false
+  "policy cannot be fetched" although senders get the policy. The private-address guard still
+  applies to the public answers, and the URL host name is still used for SNI and the
+  certificate check. No `dnsPolicy` or `hostAliases` workaround is needed in the deployment.
 - Port 25 probes never send `MAIL FROM`: banner, EHLO, STARTTLS, EHLO, QUIT.
 - Credentials are only ever read from the environment (plus the rotated OAuth2 refresh tokens
   in the database, D10). They are never sent to the browser.

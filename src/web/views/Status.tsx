@@ -359,6 +359,10 @@ export function StatusView({
             <dd>{status.timezone}</dd>
             <dt>DNS resolvers</dt>
             <dd className="mono">{status.dns.resolvers.join(', ')}</dd>
+            <dt>Blocklist resolvers</dt>
+            <dd className="mono">{status.dns.blocklistResolvers.join(', ')}</dd>
+            <dt>Spamhaus</dt>
+            <dd>{status.dns.spamhausDqs ? 'via DQS (SPAMHAUS_DQS_KEY set)' : 'public zones'}</dd>
             <dt>Port 25 probes</dt>
             <dd>{status.smtpProbe ? 'on' : 'off (SMTP_PROBE=false)'}</dd>
             <dt>Mode</dt>
