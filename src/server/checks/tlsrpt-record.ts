@@ -49,15 +49,31 @@ export async function checkTlsRpt(ctx: CheckContext): Promise<CheckResult<TlsRpt
   for (const e of errors) f.error('tls-rpt.syntax', 'Malformed TLS-RPT record', e, { refs: [ref('rfc8460', '3')] });
   const rua = parseUris(tags.rua, ctx.known.monitoredAddresses);
   data.rua = rua.uris;
-  for (const e of rua.errors)
-    f.error('tls-rpt.invalid-uri', 'Invalid report destination', e, { refs: [ref('rfc8460', '3')] });
+  for (const u of rua.uris.filter((x) => x.problem)) {
+    f.warning(
+      'tls-rpt.invalid-uri',
+      `Invalid report destination "${u.uri}"`,
+      `${u.problem![0]!.toUpperCase()}${u.problem!.slice(1)}. Senders ignore this destination, so it gets no reports.`,
+      { subject: u.uri, refs: [ref('rfc8460', '3')] },
+    );
+  }
+  if (rua.uris.length && rua.uris.every((x) => x.problem)) {
+    f.error(
+      'tls-rpt.no-valid-rua',
+      'No usable report destination',
+      'Every rua= destination is invalid, so no TLS reports are sent.',
+      {
+        refs: [ref('rfc8460', '3')],
+      },
+    );
+  }
   if (!tags.rua) {
     f.error('tls-rpt.no-rua', 'The TLS-RPT record has no rua=', 'rua= (mailto: or https:) is required.', {
       refs: [ref('rfc8460', '3')],
     });
   }
   for (const u of rua.uris) {
-    if (u.scheme !== 'mailto' && u.scheme !== 'https') {
+    if (!u.problem && u.scheme !== 'mailto' && u.scheme !== 'https') {
       f.error('tls-rpt.bad-scheme', `Unsupported destination "${u.uri}"`, 'Only mailto: and https: are defined.', {
         refs: [ref('rfc8460', '3')],
       });

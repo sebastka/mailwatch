@@ -282,6 +282,7 @@ function Destinations({ uris }: { uris: DmarcUri[] }) {
       {uris.map((u) => (
         <div key={u.uri}>
           <span className="mono">{u.address ?? u.uri}</span>{' '}
+          {u.problem && <StatusPill level="warning" text={`invalid: ${u.problem}`} />}
           {u.authorized === true && <StatusPill level="ok" text="external, authorised" />}
           {u.authorized === false && <StatusPill level="error" text="external, not authorised" />}
           {u.monitored && <StatusPill level="ok" text="read by MailWatch" />}

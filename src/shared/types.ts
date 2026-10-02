@@ -167,6 +167,8 @@ export interface DmarcUri {
   authorized: boolean | null;
   /** The address is a mailbox MailWatch reads. */
   monitored: boolean;
+  /** Why the destination is unusable (e.g. "mailto:" twice); null when it is valid. */
+  problem?: string | null;
 }
 
 export interface DmarcData {

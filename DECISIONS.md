@@ -98,7 +98,7 @@ Not done (see "Ideas not implemented" at the end).
   status is never shown by colour alone.
 - **Judgement calls** ⚠️: a missing MTA-STS or TLS-RPT is _info_ (not broken), but TLS-RPT
   missing while MTA-STS is deployed is a _warning_. A missing DMARC record is an _error_; a
-  missing SPF record a _warning_ (DMARC can still pass with DKIM). `~all` is OK. The thresholds
+  missing SPF record a _warning_ (DMARC can still pass with DKIM). `~all` is OK. An invalid report destination (e.g. `mailto:mailto:…`, checked against RFC 5322) is a _warning_: the policy works, but that destination gets no reports. The thresholds
   are in the check modules and easy to change.
 
 ### D8. RFC references on every finding, and per tab

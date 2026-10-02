@@ -1,5 +1,6 @@
 // DMARC policy records (RFC 7489 §6, with notes from DMARCbis) and their report destinations.
 import type { CheckResult, DmarcData, DmarcUri } from '../../shared/types.ts';
+import { isHostname } from '../config.ts';
 import type { DnsClient } from '../dns.ts';
 import { type CheckContext, Findings, parseTags, prefixedTxt, ref, result } from './util.ts';
 
@@ -21,23 +22,50 @@ export function orgDomain(d: string): string {
 /** Report destinations within the same organisational domain need no authorisation (RFC 7489 §7.1). */
 export const related = (a: string, b: string) => orgDomain(a) === orgDomain(b);
 
-/** Parses a comma-separated list of report URIs (RFC 7489 §6.2): "mailto:a@b!10m". */
-export function parseUris(v: string | undefined, monitored: string[]): { uris: DmarcUri[]; errors: string[] } {
+// RFC 5322 §3.2.3 dot-atom (atext excludes specials such as ":" and "@"), or a quoted string.
+const DOT_ATOM = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/i;
+const QUOTED = /^"(?:[^"\\\r\n]|\\.)*"$/;
+
+/** Why an addr-spec cannot receive mail, or null when it is valid. */
+export function addressProblem(addr: string): string | null {
+  const at = addr.lastIndexOf('@');
+  if (at <= 0) return 'no "@"';
+  const local = addr.slice(0, at);
+  const domain = addr.slice(at + 1);
+  if (!DOT_ATOM.test(local) && !QUOTED.test(local)) {
+    return `"${local}" is not a valid local part (characters such as ":" are only allowed in quotes)`;
+  }
+  if (!isHostname(domain)) return `"${domain}" is not a valid domain`;
+  return null;
+}
+
+/**
+ * Parses a comma-separated list of report URIs (RFC 7489 §6.2): "mailto:a@b!10m". Invalid
+ * entries are kept, with `problem` set, so that they can be shown and reported.
+ */
+export function parseUris(v: string | undefined, monitored: string[]): { uris: DmarcUri[] } {
   const uris: DmarcUri[] = [];
-  const errors: string[] = [];
   for (const raw of (v ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)) {
+    const u: DmarcUri = {
+      uri: raw,
+      scheme: '',
+      address: null,
+      domain: null,
+      authorized: null,
+      monitored: false,
+      problem: null,
+    };
+    uris.push(u);
     const m = /^([a-z][a-z0-9+.-]*):(.*)$/i.exec(raw);
     if (!m) {
-      errors.push(`"${raw}" is not a URI`);
+      u.problem = 'not a URI (expected e.g. mailto:dmarc@example.com)';
       continue;
     }
-    const scheme = m[1]!.toLowerCase();
-    let address: string | null = null;
-    let domain: string | null = null;
-    if (scheme === 'mailto') {
+    u.scheme = m[1]!.toLowerCase();
+    if (u.scheme === 'mailto') {
       let addr = m[2]!.replace(/!\d+[kmgt]?$/i, '').split('?')[0]!;
       try {
         addr = decodeURIComponent(addr);
@@ -45,28 +73,24 @@ export function parseUris(v: string | undefined, monitored: string[]): { uris: D
         // invalid %-escape: validated as is below
       }
       addr = addr.toLowerCase();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) errors.push(`"${raw}" is not a valid mailto: address`);
-      else {
-        address = addr;
-        domain = addr.split('@')[1]!;
+      // A common typo: the scheme twice ("mailto:mailto:a@b").
+      const problem = /^mailto:/i.test(addr) ? '"mailto:" appears twice' : addressProblem(addr);
+      if (problem) {
+        u.problem = problem;
+        continue;
       }
-    } else if (scheme === 'https') {
+      u.address = addr;
+      u.domain = addr.split('@').pop()!;
+      u.monitored = monitored.includes(addr);
+    } else if (u.scheme === 'https') {
       try {
-        domain = new URL(raw).hostname.toLowerCase();
+        u.domain = new URL(raw).hostname.toLowerCase();
       } catch {
-        errors.push(`"${raw}" is not a valid URL`);
+        u.problem = 'not a valid URL';
       }
     }
-    uris.push({
-      uri: raw,
-      scheme,
-      address,
-      domain,
-      authorized: null,
-      monitored: address !== null && monitored.includes(address),
-    });
   }
-  return { uris, errors };
+  return { uris };
 }
 
 /** RFC 7489 §7.1: a destination outside the domain must publish <domain>._report._dmarc.<dest>. */
@@ -255,10 +279,17 @@ export async function checkDmarc(ctx: CheckContext): Promise<CheckResult<DmarcDa
   const ruf = parseUris(tags.ruf, ctx.known.monitoredAddresses);
   data.rua = rua.uris;
   data.ruf = ruf.uris;
-  for (const e of [...rua.errors, ...ruf.errors]) {
-    f.error('dmarc.invalid-uri', 'Invalid report address', e, { refs: [ref('rfc7489', '6.2')] });
-  }
   for (const u of [...rua.uris, ...ruf.uris]) {
+    if (u.problem) {
+      // A warning, not an error: the policy works; only this destination gets no reports.
+      f.warning(
+        'dmarc.invalid-uri',
+        `Invalid report address "${u.uri}"`,
+        `${u.problem[0]!.toUpperCase()}${u.problem.slice(1)}. Receivers ignore this destination, so it gets no reports.`,
+        { subject: u.uri, refs: [ref('rfc7489', '6.2'), ref('rfc5322', '3.4.1')] },
+      );
+      continue;
+    }
     if (u.scheme !== 'mailto') {
       f.warning(
         'dmarc.non-mailto',
@@ -282,27 +313,31 @@ export async function checkDmarc(ctx: CheckContext): Promise<CheckResult<DmarcDa
       );
     }
   }
-  if (!data.rua.length) {
+  const validRua = data.rua.filter((u) => !u.problem);
+  if (!validRua.length) {
     f.info(
       'dmarc.no-rua',
-      'No aggregate report address (rua=)',
+      data.rua.length ? 'No usable aggregate report address (rua=)' : 'No aggregate report address (rua=)',
       'Without rua= you get no DMARC reports, so failures go unnoticed. Add rua=mailto:… and let MailWatch read that mailbox.',
       {
         refs: [ref('rfc7489', '7.2')],
       },
     );
-  } else if (!data.rua.some((u) => u.monitored)) {
+  } else if (!validRua.some((u) => u.monitored)) {
     f.info(
       'dmarc.rua-unmonitored',
       'MailWatch does not read the aggregate report mailbox',
-      `Reports go to ${data.rua.map((u) => u.address ?? u.uri).join(', ')}. Configure that mailbox as MAILBOX_n (and MAILBOX_n_ADDRESS) to analyse them here.`,
+      `Reports go to ${validRua.map((u) => u.address ?? u.uri).join(', ')}. Configure that mailbox as MAILBOX_n (and MAILBOX_n_ADDRESS) to analyse them here.`,
     );
   }
-  if (data.ruf.length && !data.ruf.some((u) => u.monitored)) {
+  if (data.ruf.some((u) => !u.problem) && !data.ruf.some((u) => u.monitored)) {
     f.info(
       'dmarc.ruf-unmonitored',
       'MailWatch does not read the failure report mailbox',
-      `Failure reports go to ${data.ruf.map((u) => u.address ?? u.uri).join(', ')}.`,
+      `Failure reports go to ${data.ruf
+        .filter((u) => !u.problem)
+        .map((u) => u.address ?? u.uri)
+        .join(', ')}.`,
     );
   }
 
