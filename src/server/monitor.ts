@@ -4,7 +4,7 @@
 //   delivery  every minute: send due probes; every DELIVERY_POLL_SECONDS: search recipients
 import type { CheckResult, JobStatus } from '../shared/types.ts';
 import type { Alerts } from './alerts.ts';
-import { runDomainChecks } from './checks/index.ts';
+import { newRun, type RunShared, runDomainChecks } from './checks/index.ts';
 import { recordSignature } from './checks/signature.ts';
 import { mapLimit } from './checks/util.ts';
 import type { Config, DomainConfig } from './config.ts';
@@ -101,10 +101,12 @@ export class Monitor {
           await this.alerts.pruneDomains(this.domains.map((d) => d.name));
           const monitored = this.cfg.mailboxes.map((m) => m.address).filter((a): a is string => Boolean(a));
           const errors: string[] = [];
+          // One set of caches per run: domains sharing MX hosts share their DNS answers and probes.
+          const shared = newRun(this.cfg.checks);
           await mapLimit(domains, this.cfg.checks.concurrency, async (d) => {
             if (this.stopping) return;
             try {
-              await this.checkDomain(d, monitored);
+              await this.checkDomain(d, monitored, shared);
             } catch (e) {
               errors.push(`${d.name}: ${(e as Error).message}`);
               this.log(errors.at(-1)!);
@@ -120,7 +122,7 @@ export class Monitor {
     );
   }
 
-  private async checkDomain(d: DomainConfig, monitoredAddresses: string[]): Promise<CheckResult[]> {
+  private async checkDomain(d: DomainConfig, monitoredAddresses: string[], shared: RunShared): Promise<CheckResult[]> {
     const [previous, reportSelectors, facts] = await Promise.all([
       this.store.checkResults({ domain: d.name }),
       this.store.dmarcSelectors(d.name, 30),
@@ -132,6 +134,7 @@ export class Monitor {
       {
         known: { reportSelectors, probeSelectors: facts.selectors, probeIps: facts.ips, monitoredAddresses },
         previous,
+        ...shared,
       },
     );
     await this.store.saveCheckResults(results);

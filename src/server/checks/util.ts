@@ -83,6 +83,8 @@ export interface CheckContext {
   dns: DnsClient;
   /** For the blocklist lookups only (DNSBL_RESOLVERS); the same client when they are the same resolvers. */
   blocklistDns: DnsClient;
+  /** SMTP probes of this run, shared by the domains that use the same MX hosts. */
+  probes: import('./smtp.ts').ProbeCache;
   cfg: Config['checks'];
   known: KnownFacts;
   now: Date;

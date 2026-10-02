@@ -83,6 +83,12 @@ Not done (see "Ideas not implemented" at the end).
   BIMI → blocklists) and share one context: MTA-STS and DANE use the certificates of the MX
   probe, BIMI the DMARC result, SPF the Null MX result.
 - A bug in one check produces an "internal-error" finding for that check; the others still run.
+- **Shared within a run:** all domains of one check run share one DNS cache (one per resolver
+  set) and one SMTP probe per MX host. Domains on the same mail provider therefore ask the
+  provider's MX addresses, reverse DNS, TLSA and blocklist questions once, and probe its MX
+  once (for two domains on `mx.domeneshop.no`: 136 instead of 200 queries, 1 instead of 2
+  probe sessions), and they get the same certificate and DANE verdicts. Nothing is kept
+  between runs, so every run sees current DNS and servers.
 
 ## Levels, RFCs and findings
 

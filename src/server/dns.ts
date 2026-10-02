@@ -155,7 +155,8 @@ export class DnsClient {
     return p as Promise<DnsResult<T>>;
   }
 
-  private async lookup(name: string, type: RecordType): Promise<DnsResult<unknown>> {
+  /** Sends the question (no cache); overridden by the tests' fake resolver. */
+  protected async lookup(name: string, type: RecordType): Promise<DnsResult<unknown>> {
     let lastError = 'no answer';
     // Each server is tried once; a second round helps against a single lost UDP packet.
     for (const server of [...this.servers, ...this.servers]) {

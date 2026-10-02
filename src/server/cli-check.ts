@@ -3,7 +3,7 @@
 // Without arguments, the domains configured in DOMAIN_<n>_NAME are checked.
 import type { CheckResult, Level } from '../shared/types.ts';
 import { refLabel } from '../shared/rfcs.ts';
-import { runDomainChecks } from './checks/index.ts';
+import { newRun, runDomainChecks } from './checks/index.ts';
 import { config } from './config.ts';
 
 const args = process.argv.slice(2);
@@ -20,8 +20,10 @@ if (!domains.length) {
 
 const ICON: Record<Level, string> = { ok: '✔', info: 'ℹ', warning: '⚠', error: '✖' };
 const all: Record<string, CheckResult[]> = {};
+// Domains sharing MX hosts share DNS answers and SMTP probes within this run.
+const shared = newRun(cfg);
 for (const d of domains) {
-  const results = await runDomainChecks(d, cfg);
+  const results = await runDomainChecks(d, cfg, shared);
   all[d.name] = results;
   if (json) continue;
   console.log(`\n${d.name}`);

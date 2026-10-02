@@ -401,3 +401,44 @@ test('blocklists: own resolver, Spamhaus DQS, and the key never shows', async ()
   );
   assert.ok(!lists.asked.some((q) => q.startsWith('example.com MX')), 'the other checks do not');
 });
+
+test('domains of one run share DNS answers and SMTP probes of common MX hosts', async () => {
+  const { runDomainChecks } = await import('../src/server/checks/index.ts');
+  const { ProbeCache } = await import('../src/server/checks/smtp.ts');
+  const { FakeDns, checksConfig } = await import('./helpers.ts');
+  const mx = { preference: 10, exchange: 'mx.provider.example' };
+  const dns = new FakeDns({
+    'a.example MX': [mx],
+    'b.example MX': [mx],
+    'mx.provider.example A': ['192.0.2.25'],
+    '25.2.0.192.bl.example A': ['127.0.0.2'],
+  });
+  // `asked` lists the questions sent past the cache: a shared run must send each one once.
+  const counted = new Map<string, number>();
+  const count = () => {
+    for (const q of dns.asked) counted.set(q, (counted.get(q) ?? 0) + 1);
+  };
+  const cfg = { ...checksConfig(), ipZones: ['bl.example'] };
+  const shared = { dns, blocklistDns: dns, probes: new ProbeCache() };
+  const [a, b] = await Promise.all(
+    ['a.example', 'b.example'].map((name) => runDomainChecks({ name, dkimSelectors: [], senderIps: [] }, cfg, shared)),
+  );
+  count();
+  assert.equal(counted.get('mx.provider.example A'), 1);
+  assert.equal(counted.get('25.2.0.192.bl.example A'), 1);
+  assert.equal(counted.get('_25._tcp.mx.provider.example TLSA'), 1);
+  assert.equal(counted.get('a.example MX'), 1);
+  for (const r of [a!, b!])
+    assert.ok(r.find((x) => x.check === 'dnsbl')!.findings.some((f) => f.code === 'dnsbl.listed'));
+
+  // Probes: one per MX host and run, also when asked concurrently.
+  const cache = new ProbeCache();
+  let started = 0;
+  const probe = async () => (started++, []);
+  await Promise.all([
+    cache.forHost('MX.provider.example', probe),
+    cache.forHost('mx.provider.example', probe),
+    cache.forHost('mx.other.example', probe),
+  ]);
+  assert.equal(started, 2);
+});

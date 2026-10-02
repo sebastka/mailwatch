@@ -179,3 +179,22 @@ export async function probeSmtp(host: string, ip: string, opts: ProbeOptions): P
     if (s) setTimeout(() => s.destroy(), 200).unref();
   }
 }
+
+/**
+ * Probes of one check run, by MX host: domains that share an MX (common with a mail provider)
+ * probe it once, and all of them get the same result. Holds promises, so domains checked in
+ * parallel share a probe that is still running.
+ */
+export class ProbeCache {
+  private readonly byHost = new Map<string, Promise<SmtpProbe[]>>();
+
+  forHost(host: string, probe: () => Promise<SmtpProbe[]>): Promise<SmtpProbe[]> {
+    const key = host.toLowerCase();
+    let p = this.byHost.get(key);
+    if (!p) {
+      p = probe();
+      this.byHost.set(key, p);
+    }
+    return p;
+  }
+}

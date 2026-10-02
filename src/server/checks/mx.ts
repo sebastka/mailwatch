@@ -200,17 +200,24 @@ export async function checkMx(ctx: CheckContext): Promise<CheckResult<MxData>> {
 }
 
 async function probeAll(ctx: CheckContext, f: Findings, data: MxData): Promise<void> {
-  const targets = data.records.slice(0, MAX_HOSTS).flatMap((r) => {
+  // One IPv4 and one IPv6 address per host; a host shared with other domains is probed once per run.
+  const probeHost = (r: MxHost) => {
     const v4 = r.addresses.find((a) => !a.ip.includes(':'));
     const v6 = r.addresses.find((a) => a.ip.includes(':'));
-    return [v4, v6]
+    const ips = [v4, v6]
       .filter((a) => a !== undefined && !isNonPublicIp(a.ip))
       .slice(0, MAX_IPS_PER_HOST)
-      .map((a) => ({ host: r.exchange, ip: a!.ip }));
-  });
-  data.smtp = await mapLimit(targets, 4, (t) =>
-    probeSmtp(t.host, t.ip, { heloName: ctx.cfg.heloName, timeoutMs: ctx.cfg.smtpTimeoutMs, now: ctx.now }),
+      .map((a) => a!.ip);
+    return Promise.all(
+      ips.map((ip) =>
+        probeSmtp(r.exchange, ip, { heloName: ctx.cfg.heloName, timeoutMs: ctx.cfg.smtpTimeoutMs, now: ctx.now }),
+      ),
+    );
+  };
+  const perHost = await mapLimit(data.records.slice(0, MAX_HOSTS), 3, (r) =>
+    r.addresses.length ? ctx.probes.forHost(r.exchange, () => probeHost(r)) : Promise.resolve([]),
   );
+  data.smtp = perHost.flat();
   if (data.smtp.length && data.smtp.every((p) => !p.connected)) {
     f.error(
       'smtp.unreachable-all',
