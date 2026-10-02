@@ -84,7 +84,7 @@ test('pipelined replies that arrive before they are awaited are not lost', async
 
 test('HTTPS fetches of URLs from DNS refuse internal addresses', async () => {
   const { httpsGet } = await import('../src/server/checks/util.ts');
-  await assert.rejects(httpsGet('https://localhost:1/', 2000), /non-public address \(127\.0\.0\.1\)/);
+  await assert.rejects(httpsGet('https://localhost:1/', 2000), /non-public address \((127\.0\.0\.1|::1)\)/);
   await assert.rejects(httpsGet('https://127.0.0.1:1/', 2000), /non-public address/);
   await assert.rejects(httpsGet('http://example.com/', 2000), /not an https/);
 });

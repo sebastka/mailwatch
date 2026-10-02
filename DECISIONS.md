@@ -307,6 +307,32 @@ Not done (see "Ideas not implemented" at the end).
   recorded main branch is `main`. If you create `main`, change `push: {branches: [master]}` in
   `release.yaml`.
 
+### D24. GitHub repository rules ⚠️
+
+Copied from zdwatch:
+
+- **Ruleset "master"** (on the default branch):
+  - no deletion and no force push;
+  - changes go through a pull request, with **0 required approvals** (GitHub does not let you
+    approve your own PRs);
+  - the **"Check (tsc + eslint + prettier + tests) & build"** job must pass; only the GitHub
+    Actions app may report it;
+  - squash merge only.
+- **Admins bypass the ruleset**, so you can still push to `master` directly. Remove the bypass
+  to force every change through a PR.
+- **"Require branches to be up to date" is off**, so a merge does not force every open
+  Dependabot PR to rebase and rerun CI.
+- **Dependabot:** `dependabot-auto-merge.yml` approves minor and patch updates and enables
+  auto-merge; majors wait for you. This needs "Allow auto-merge" and "Allow GitHub Actions to
+  approve pull requests" (both on). `DHI_USERNAME`/`DHI_TOKEN` are repository secrets and a
+  variable here (Actions and Dependabot), since the repository belongs to a user, not to the
+  Fjordmail organisation whose secrets zdwatch uses.
+- **Other settings:** merged branches are deleted automatically, the "Update branch" button is
+  shown, the squash commit takes the PR title and body, merge commits and rebase merges are
+  disabled.
+- **Difference from zdwatch:** the default `GITHUB_TOKEN` permission stays **read-only**
+  (zdwatch: read and write). Both workflows declare the permissions they need.
+
 ## Ideas not implemented
 
 - Client autoconfiguration records: SRV `_submission._tcp`/`_imaps._tcp` (RFC 6186), Thunderbird
