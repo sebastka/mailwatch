@@ -1,0 +1,232 @@
+---
+name: Release mailwatch
+
+on:
+  workflow_dispatch:
+  push: {branches: [master]}
+  pull_request:
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (tsc + eslint + prettier + tests) & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-check-${{ github.ref }}
+      cancel-in-progress: true
+    # The store and mailbox cleanup integration tests run against a real MariaDB and IMAP server.
+    # Images pinned by digest (multi-arch index), as in compose.yaml: refresh both together with
+    # `docker buildx imagetools inspect <image:tag>`.
+    services:
+      mariadb:
+        image: mariadb:11.4@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      # Disposable IMAP server for the mailbox cleanup tests (any user, password from env).
+      imap:
+        image: dovecot/dovecot:2.4.2@sha256:3fe299453447826694a42f7bb04b8ea12bc36bbc353fac154df05a0e7d6eaf48
+        env:
+          USER_PASSWORD: ci-imap
+        ports: ['31993:31993']
+    env:
+      TEST_IMAP_HOST: 127.0.0.1
+      TEST_IMAP_PORT: '31993'
+      TEST_IMAP_PASSWORD: ci-imap
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: ci-root
+      TEST_DB_NAME: mailwatch_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check
+        run: npm run check
+
+      # Validate the production build on every trigger (PRs included).
+      - name: Build
+        run: npm run build
+
+  release:
+    name: Build & publish signed archive
+    needs: [check]
+    if: github.event_name != 'pull_request'   # never publish from a PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: ${{ github.workflow }}-release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write   # create the GitHub release
+      id-token: write   # cosign keyless signing of the archive (OIDC)
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The bundle has the same /app layout as the Docker image: the built UI in dist/web, the
+      # TypeScript server (run directly by Node's type stripping) and its production
+      # node_modules (pure JS, so it runs on any architecture). Run it with
+      # `node src/server/index.ts` on Node 26; the image is built separately (docker job).
+      - name: Assemble the mailwatch bundle
+        run: scripts/bundle.sh /tmp/stage/mailwatch
+
+      - name: Create release archive
+        run: |
+          tar -cJf /tmp/mailwatch.tar.xz --owner=0 --group=0 -C /tmp/stage mailwatch
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Checksum and sign the archive
+        run: |
+          # SHA-256 (relative name so `sha256sum -c` works after download)
+          ( cd /tmp && sha256sum mailwatch.tar.xz > mailwatch.tar.xz.sha256 )
+          # Keyless signature via the job's GitHub OIDC identity
+          # (bundle = signature + certificate + Rekor transparency-log entry).
+          cosign sign-blob --yes /tmp/mailwatch.tar.xz --bundle /tmp/mailwatch.tar.xz.cosign.bundle
+
+      # Tag = build date + short commit SHA, e.g. 2026.09.25-a3e232b (always unique).
+      - name: Compute release tag
+        id: tag
+        run: echo "tag=$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image ref (for the release notes)
+        id: img
+        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY,,}:${{ steps.tag.outputs.tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: mailwatch ${{ steps.tag.outputs.tag }}
+          body: |
+            Container image: `${{ steps.img.outputs.ref }}`
+
+            Verify the archive (keyless, GitHub OIDC):
+
+            ```
+            cosign verify-blob mailwatch.tar.xz \
+              --bundle mailwatch.tar.xz.cosign.bundle \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            sha256sum -c mailwatch.tar.xz.sha256
+            ```
+          files: |
+            /tmp/mailwatch.tar.xz
+            /tmp/mailwatch.tar.xz.sha256
+            /tmp/mailwatch.tar.xz.cosign.bundle
+          fail_on_unmatched_files: true
+
+  docker:
+    name: Build & push image
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # cosign keyless signing (OIDC)
+    steps:
+      # The multi-stage Dockerfile builds the app itself (the check job has already tested it).
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Set up Buildx  # docker-container driver enables provenance & SBOM attestations
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      # Docker Hardened Images require a Docker Hub account to pull: variable DHI_USERNAME
+      # (Docker Hub username) and secret DHI_TOKEN (read-only personal access token).
+      - name: Log in to dhi.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: dhi.io
+          username: ${{ vars.DHI_USERNAME }}
+          password: ${{ secrets.DHI_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Immutable tag for traceability, plus a moving `latest` for the deploy to follow.
+      - name: Compute image refs
+        id: img
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "immutable=${repo}:${{ needs.release.outputs.tag }}"
+            echo "latest=${repo}:latest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          push: true
+          # The build stages run once on the runner's platform ($BUILDPLATFORM) and produce
+          # architecture-independent output; the per-platform runtime stage only copies
+          # files, so arm64 needs no emulation.
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.img.outputs.immutable }}
+            ${{ steps.img.outputs.latest }}
+          build-args: REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max   # full SLSA build provenance attestation
+          sbom: true             # generate + attach an SBOM attestation
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      # Keyless signing via the job's GitHub OIDC identity; signs by digest (tags are mutable).
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}"

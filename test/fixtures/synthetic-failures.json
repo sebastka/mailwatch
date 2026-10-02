@@ -1,0 +1,40 @@
+{
+  "organization-name": "Example Reporter",
+  "date-range": { "start-datetime": "2026-09-10T00:00:00Z", "end-datetime": "2026-09-10T23:59:59Z" },
+  "contact-info": "tlsrpt@example.net",
+  "report-id": "synthetic-1",
+  "policies": [
+    {
+      "policy": {
+        "policy-type": "sts",
+        "policy-string": ["version: STSv1", "mode: enforce", "mx: mx.example.com", "max_age: 604800"],
+        "policy-domain": "example.com",
+        "mx-host": ["mx.example.com"]
+      },
+      "summary": { "total-successful-session-count": 90, "total-failure-session-count": 10 },
+      "failure-details": [
+        {
+          "result-type": "certificate-expired",
+          "sending-mta-ip": "192.0.2.10",
+          "receiving-mx-hostname": "mx.example.com",
+          "receiving-ip": "198.51.100.25",
+          "failed-session-count": 7
+        },
+        {
+          "result-type": "starttls-not-supported",
+          "sending-mta-ip": "192.0.2.11",
+          "receiving-mx-hostname": "mx.example.com",
+          "receiving-mx-helo": "mail.example.com",
+          "receiving-ip": "198.51.100.25",
+          "failed-session-count": 3,
+          "additional-information": "https://example.net/tlsrpt/details",
+          "failure-reason-code": "421 4.7.0"
+        }
+      ]
+    },
+    {
+      "policy": { "policy-type": "no-policy-found", "policy-domain": "example.org" },
+      "summary": { "total-successful-session-count": 5, "total-failure-session-count": 0 }
+    }
+  ]
+}

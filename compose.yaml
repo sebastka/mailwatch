@@ -1,0 +1,45 @@
+# Local development dependencies (the app itself runs with `npm run dev`):
+#   docker compose up -d                  MariaDB only (on 127.0.0.1:3308)
+#   docker compose --profile oidc up -d   MariaDB + a mock OIDC provider on :8080 (MOCK_OIDC_PORT)
+#   docker compose --profile imap up -d   MariaDB + a disposable IMAP server for the mailbox tests
+# Images are pinned by digest (multi-arch index), the same as in .github/workflows/release.yaml.
+services:
+  mariadb:
+    image: mariadb:11.4@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: mailwatch
+      MARIADB_USER: mailwatch
+      MARIADB_PASSWORD: ${DB_PASSWORD:-mailwatch}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-mailwatch-root}
+    ports:
+      - '127.0.0.1:${DB_PORT:-3308}:3306'
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./dev/mariadb-init.sql:/docker-entrypoint-initdb.d/10-mailwatch.sql:ro
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Accepts any username on its login form; enter claims such as {"groups": ["mailwatch"]}.
+  # Issuer: http://localhost:${MOCK_OIDC_PORT:-8080}/default (the port is configurable if 8080 is taken)
+  mock-oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:6.0.3@sha256:250e04413e2fc7877d4cb38ecd74d3ecb1a40aae3a9bdad96d1c593e59fee95e
+    profiles: [oidc]
+    ports:
+      - '127.0.0.1:${MOCK_OIDC_PORT:-8080}:8080'
+
+  # Disposable IMAP server for the mailbox tests (report import, cleanup, delivery probes):
+  # any username, password "secret". Never point the tests at a real mailbox.
+  test-imap:
+    image: dovecot/dovecot:2.4.2@sha256:3fe299453447826694a42f7bb04b8ea12bc36bbc353fac154df05a0e7d6eaf48
+    profiles: [imap]
+    environment:
+      USER_PASSWORD: secret
+    ports:
+      - '127.0.0.1:31993:31993'
+
+volumes:
+  mariadb-data:

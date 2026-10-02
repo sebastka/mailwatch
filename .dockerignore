@@ -1,0 +1,10 @@
+# Allow-list: only what the Dockerfile copies. Keeps .env, data, node_modules, .git and
+# build output out of the build context.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.server.json
+!tsconfig.web.json
+!vite.config.ts
+!src/

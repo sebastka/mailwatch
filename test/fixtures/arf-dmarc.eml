@@ -1,0 +1,41 @@
+From: dmarc-failures@reporter.example
+To: ruf@wemail.no
+Subject: Report Domain: wemail.no Submitter: reporter.example
+MIME-Version: 1.0
+Date: Thu, 01 Oct 2026 10:00:00 +0000
+Message-ID: <arf-1@reporter.example>
+Content-Type: multipart/report; report-type=feedback-report; boundary="part1"
+
+--part1
+Content-Type: text/plain; charset=us-ascii
+
+This is an authentication failure report for an email message received from IP 192.0.2.1.
+
+--part1
+Content-Type: message/feedback-report
+
+Feedback-Type: auth-failure
+User-Agent: SomeGenerator/1.0
+Version: 1
+Original-Mail-From: <bounce@wemail.no>
+Original-Rcpt-To: <user@reporter.example>
+Arrival-Date: Thu, 01 Oct 2026 09:58:00 +0000
+Source-IP: 192.0.2.1
+Reported-Domain: wemail.no
+Authentication-Results: mx.reporter.example; dkim=fail header.d=wemail.no; spf=fail smtp.mailfrom=wemail.no; dmarc=fail header.from=wemail.no
+Auth-Failure: dmarc
+Delivery-Result: reject
+DKIM-Domain: wemail.no
+DKIM-Selector: s1
+Identity-Alignment: none
+
+--part1
+Content-Type: text/rfc822-headers
+
+From: "Wemail" <news@wemail.no>
+To: <user@reporter.example>
+Subject: Your invoice
+Date: Thu, 01 Oct 2026 09:57:00 +0000
+Message-ID: <orig-1@wemail.no>
+
+--part1--
