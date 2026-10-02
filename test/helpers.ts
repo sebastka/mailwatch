@@ -30,13 +30,15 @@ export class FakeDns extends DnsClient {
     this.insecure = new Set(insecure.map((s) => s.toLowerCase()));
   }
 
-  override async query<T = unknown>(rawName: string, type: RecordType): Promise<DnsResult<T>> {
+  // Overrides the network step only, so that DnsClient's cache works as in production and
+  // `asked` lists the questions that would actually be sent.
+  protected override async lookup(rawName: string, type: RecordType): Promise<DnsResult<unknown>> {
     const name = normalizeName(rawName);
     this.asked.push(`${name} ${type}`);
     const v = this.zone[`${name} ${type}`.toLowerCase()];
     const secure = !this.insecure.has(name);
     if (v && !Array.isArray(v)) return { name, type, rcode: v.rcode, secure: false, records: [], cnames: [] };
-    if (v) return { name, type, rcode: 'NOERROR', secure, records: v as T[], cnames: [] };
+    if (v) return { name, type, rcode: 'NOERROR', secure, records: v, cnames: [] };
     const exists = Object.keys(this.zone).some(
       (k) => k.split(' ')[0] === name || k.split(' ')[0]!.endsWith(`.${name}`),
     );
