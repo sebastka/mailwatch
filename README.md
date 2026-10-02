@@ -51,7 +51,7 @@ recipients and notification settings.
 ## Requirements
 
 - Node.js ≥ 26 (see `.nvmrc`). The TypeScript server runs directly, with no build step.
-- MariaDB (tested with 11.4 LTS). For development, `compose.yaml` provides one.
+- MariaDB (tested with 12.3 LTS). For development, `compose.yaml` provides one.
 - Outbound DNS (UDP/TCP 53) to validating resolvers, HTTPS, and **port 25** for the MX probes.
   Many cloud and home networks block outbound port 25; set `SMTP_PROBE=false` there.
 

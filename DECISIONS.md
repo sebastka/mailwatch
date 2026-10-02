@@ -247,7 +247,13 @@ Not done (see "Ideas not implemented" at the end).
 
 ## Development & deployment
 
-### D20. Development database on port 3308
+### D20. MariaDB 12.3 LTS; development database on port 3308
+
+- **Version:** MariaDB 12.3, the current long-term support release (`mariadb:lts`), in
+  `compose.yaml` and in CI, pinned by digest. tlsrpt and zdwatch use 11.4 LTS; MailWatch uses
+  nothing version-specific, so 11.4 and later work as well. 13.x are short-lived rolling
+  releases. Deploy against 12.3 (what CI tests). `MARIADB_AUTO_UPGRADE=1` in `compose.yaml`
+  upgrades an existing development volume in place.
 
 - tlsrpt uses 3306 and zdwatch 3307 for their compose MariaDB; MailWatch uses 3308 so that all
   three can run at once. The compose file also has the mock OIDC provider and the disposable
