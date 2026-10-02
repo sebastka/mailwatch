@@ -129,3 +129,22 @@ test('defaults and validation', () => {
   assert.throws(() => loadConfig({ CHECK_INTERVAL_MINUTES: 'often' }), /must be an integer/);
   assert.throws(() => loadConfig({ TIMEZONE: 'Mars/Olympus' }), /IANA/);
 });
+
+test('blocklist resolvers default to DNS_RESOLVERS; the DQS key is validated without being echoed', () => {
+  assert.deepEqual(loadConfig({ DB_PASSWORD: 'x' }).checks.blocklistResolvers, ['1.1.1.1', '8.8.8.8']);
+  assert.deepEqual(loadConfig({ DB_PASSWORD: 'x', DNS_RESOLVERS: '9.9.9.9' }).checks.blocklistResolvers, ['9.9.9.9']);
+  const own = loadConfig({ DB_PASSWORD: 'x', DNSBL_RESOLVERS: '192.168.2.53,192.168.2.54:5353' });
+  assert.deepEqual(
+    [own.checks.resolvers, own.checks.blocklistResolvers],
+    [
+      ['1.1.1.1', '8.8.8.8'],
+      ['192.168.2.53', '192.168.2.54:5353'],
+    ],
+  );
+  assert.equal(loadConfig({ DB_PASSWORD: 'x' }).checks.spamhausDqsKey, null);
+  validateConfig({ server: false }, loadConfig({ DB_PASSWORD: 'x', SPAMHAUS_DQS_KEY: 'abcdefghijklmnopqrstuvwxyz' }));
+  assert.throws(
+    () => validateConfig({ server: false }, loadConfig({ DB_PASSWORD: 'x', SPAMHAUS_DQS_KEY: 'bad key; rm' })),
+    (e: Error) => /SPAMHAUS_DQS_KEY/.test(e.message) && !e.message.includes('bad key'),
+  );
+});

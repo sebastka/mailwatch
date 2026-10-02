@@ -32,11 +32,15 @@ export const NO_FACTS: KnownFacts = { reportSelectors: [], probeSelectors: [], p
 export async function runDomainChecks(
   domain: DomainCheckInput,
   cfg: Config['checks'],
-  opts: { known?: KnownFacts; previous?: CheckResult[]; now?: Date; dns?: DnsClient } = {},
+  opts: { known?: KnownFacts; previous?: CheckResult[]; now?: Date; dns?: DnsClient; blocklistDns?: DnsClient } = {},
 ): Promise<CheckResult[]> {
+  const dns = opts.dns ?? new DnsClient(cfg.resolvers, cfg.dnsTimeoutMs);
+  const sameResolvers = cfg.blocklistResolvers.join(',') === cfg.resolvers.join(',');
   const ctx: CheckContext = {
     domain,
-    dns: opts.dns ?? new DnsClient(cfg.resolvers, cfg.dnsTimeoutMs),
+    dns,
+    blocklistDns:
+      opts.blocklistDns ?? (sameResolvers || opts.dns ? dns : new DnsClient(cfg.blocklistResolvers, cfg.dnsTimeoutMs)),
     cfg,
     known: opts.known ?? NO_FACTS,
     now: opts.now ?? new Date(),

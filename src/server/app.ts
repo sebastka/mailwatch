@@ -112,7 +112,12 @@ export function createApp(s: Services): Hono<AppEnv> {
         lastError: s.alerts.lastNotifyError,
         quiet: await s.alerts.quietNow(),
       },
-      dns: { resolvers: cfg.checks.resolvers },
+      dns: {
+        resolvers: cfg.checks.resolvers,
+        blocklistResolvers: cfg.checks.blocklistResolvers,
+        // Whether a key is set, never the key itself.
+        spamhausDqs: cfg.checks.spamhausDqsKey !== null,
+      },
       smtpProbe: cfg.checks.smtpProbe,
     };
     return c.json(status);

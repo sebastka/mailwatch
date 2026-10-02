@@ -71,7 +71,7 @@ export async function checkBimi(ctx: CheckContext): Promise<CheckResult<BimiData
       f.error('bimi.logo-url', 'The logo URL is not https://', l, { refs: [ref('bimi')] });
     } else {
       try {
-        const res = await httpsGet(l, ctx.cfg.httpTimeoutMs, 512 * 1024);
+        const res = await httpsGet(l, dns, ctx.cfg.httpTimeoutMs, 512 * 1024);
         Object.assign(data.logo, { status: res.status, contentType: res.contentType, bytes: res.bytes });
         if (!res.authorized)
           f.error('bimi.logo-cert', 'The logo host’s certificate is not valid', String(res.authorizationError), {
@@ -120,7 +120,7 @@ export async function checkBimi(ctx: CheckContext): Promise<CheckResult<BimiData
   if (a) {
     data.authority = { url: a, status: null, error: null };
     try {
-      const res = await httpsGet(a, ctx.cfg.httpTimeoutMs, 256 * 1024);
+      const res = await httpsGet(a, dns, ctx.cfg.httpTimeoutMs, 256 * 1024);
       data.authority.status = res.status;
       if (res.status !== 200 || !res.body.includes('-----BEGIN CERTIFICATE-----')) {
         f.error(

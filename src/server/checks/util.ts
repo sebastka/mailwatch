@@ -1,6 +1,5 @@
 // Building blocks shared by the checks.
 import { X509Certificate, createHash } from 'node:crypto';
-import { lookup as dnsLookup } from 'node:dns';
 import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { checkServerIdentity, type TLSSocket } from 'node:tls';
@@ -82,6 +81,8 @@ export interface KnownFacts {
 export interface CheckContext {
   domain: DomainCheckInput;
   dns: DnsClient;
+  /** For the blocklist lookups only (DNSBL_RESOLVERS); the same client when they are the same resolvers. */
+  blocklistDns: DnsClient;
   cfg: Config['checks'];
   known: KnownFacts;
   now: Date;
@@ -257,7 +258,7 @@ export interface HttpsResult {
  * is not enforced by the TLS layer, so that an invalid one can be reported with its details;
  * callers decide from `authorized`.
  */
-export function httpsGet(url: string, timeoutMs: number, maxBytes = 1024 * 1024): Promise<HttpsResult> {
+export function httpsGet(url: string, dns: DnsClient, timeoutMs: number, maxBytes = 1024 * 1024): Promise<HttpsResult> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     if (u.protocol !== 'https:') return reject(new Error('not an https:// URL'));
@@ -272,23 +273,24 @@ export function httpsGet(url: string, timeoutMs: number, maxBytes = 1024 * 1024)
         method: 'GET',
         rejectUnauthorized: false,
         headers: { 'user-agent': 'MailWatch', accept: '*/*' },
-        // URLs come from DNS (BIMI l=/a=, MTA-STS): never connect to internal addresses.
-        lookup: (host, opts, cb) =>
-          dnsLookup(host, { ...opts, all: true }, (err, addresses) => {
-            if (err) return cb(err, opts.all ? [] : '', 0);
-            const list = addresses as unknown as { address: string; family: number }[];
-            const bad = list.find((a) => isNonPublicIp(a.address));
-            if (bad || !list.length) {
-              return cb(
-                new Error(`${host} resolves to a non-public address (${bad?.address ?? 'none'}); not fetched`),
-                opts.all ? [] : '',
-                0,
-              );
-            }
+        // Resolved through DNS_RESOLVERS like every other check (not the OS resolver, which may
+        // give an internal split-horizon view), so the fetch sees what senders see. URLs come
+        // from DNS (BIMI l=/a=, MTA-STS): never connect to internal addresses. The URL host name
+        // is still used for SNI and the certificate check.
+        lookup: (host, opts, cb) => {
+          const fail = (e: Error) => cb(e, opts.all ? [] : '', 0);
+          dns.addresses(host).then((r) => {
+            const list = r.ips.map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
+            const wanted = opts.family === 4 || opts.family === 6 ? list.filter((a) => a.family === opts.family) : list;
+            if (!wanted.length)
+              return fail(new Error(r.failed ? `cannot resolve ${host}: lookup failed` : `${host} has no address`));
+            const bad = wanted.find((a) => isNonPublicIp(a.address));
+            if (bad) return fail(new Error(`${host} resolves to a non-public address (${bad.address}); not fetched`));
             // Node asks for all addresses (happy eyeballs) or for one.
-            if (opts.all) (cb as unknown as (e: null, a: typeof list) => void)(null, list);
-            else cb(null, list[0]!.address, list[0]!.family);
-          }),
+            if (opts.all) (cb as unknown as (e: null, a: typeof wanted) => void)(null, wanted);
+            else cb(null, wanted[0]!.address, wanted[0]!.family);
+          }, fail);
+        },
       },
       (res) => {
         const sock = res.socket as TLSSocket;

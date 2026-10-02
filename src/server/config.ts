@@ -272,9 +272,9 @@ function validTimezone(tz: string): string {
   }
 }
 
-/** DNS_RESOLVERS: IP addresses (optionally ip:port), or "system" for the operating system's resolvers. */
-function resolvers(env: Env): string[] {
-  const v = list('DNS_RESOLVERS', '1.1.1.1,8.8.8.8', env);
+/** A resolver list: IP addresses (optionally ip:port), or "system" for the operating system's resolvers. */
+function resolvers(name: string, fallback: string, env: Env): string[] {
+  const v = list(name, fallback, env);
   if (v.length === 1 && v[0]!.toLowerCase() === 'system') return getServers();
   return v;
 }
@@ -360,7 +360,15 @@ export function loadConfig(env: Env = process.env) {
       intervalMinutes: int('CHECK_INTERVAL_MINUTES', 15, env),
       /** Domains checked in parallel. */
       concurrency: int('CHECK_CONCURRENCY', 4, env),
-      resolvers: resolvers(env),
+      /** Validating resolvers for every check: the public view senders see (DNS_RESOLVERS). */
+      resolvers: resolvers('DNS_RESOLVERS', '1.1.1.1,8.8.8.8', env),
+      /**
+       * Resolvers for the blocklist lookups only (DNSBL_RESOLVERS), e.g. an own recursive
+       * resolver: many lists refuse queries through big public resolvers. Default: DNS_RESOLVERS.
+       */
+      blocklistResolvers: resolvers('DNSBL_RESOLVERS', str('DNS_RESOLVERS', '1.1.1.1,8.8.8.8', env)!, env),
+      /** Spamhaus Data Query Service key: Spamhaus zones are then queried as <key>.<zone>.dq.spamhaus.net. */
+      spamhausDqsKey: str('SPAMHAUS_DQS_KEY', undefined, env) ?? null,
       dnsTimeoutMs: int('DNS_TIMEOUT_MS', 4000, env),
       /** Connect to every MX on port 25 (STARTTLS, certificate, DANE). */
       smtpProbe: bool('SMTP_PROBE', true, env),
@@ -429,6 +437,11 @@ export function validateConfig({ server }: { server: boolean }, cfg: Config = co
     throw new Error('TELEGRAM_TOKEN and TELEGRAM_CHAT_ID must be set together');
   }
   if (!cfg.checks.resolvers.length) throw new Error('DNS_RESOLVERS is empty');
+  if (!cfg.checks.blocklistResolvers.length) throw new Error('DNSBL_RESOLVERS is empty');
+  if (cfg.checks.spamhausDqsKey !== null && !/^[a-z0-9]{8,64}$/i.test(cfg.checks.spamhausDqsKey)) {
+    // Never echo the key itself.
+    throw new Error('SPAMHAUS_DQS_KEY must be the letters and digits of your Spamhaus DQS key');
+  }
   if (cfg.checks.concurrency < 1) throw new Error('CHECK_CONCURRENCY must be at least 1');
   if (cfg.alerts.confirmations < 1) throw new Error('ALERT_CONFIRMATIONS must be at least 1');
   if (cfg.delivery.timeoutMinutes < 1) throw new Error('DELIVERY_TIMEOUT_MINUTES must be at least 1');
