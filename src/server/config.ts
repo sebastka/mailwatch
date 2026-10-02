@@ -78,6 +78,8 @@ export interface DomainConfig {
   smtp: SmtpConfig | null;
   from: string | null;
   sendIntervalMinutes: number;
+  /** The domain's own IMAP server, checked for TLS (DOMAIN_n_IMAPHOST); null = not checked. */
+  imap: { host: string; port: number } | null;
 }
 
 export interface RecipientConfig {
@@ -208,6 +210,7 @@ export function parseDomains(env: Env, defaultInterval: number): DomainConfig[] 
       smtp,
       from,
       sendIntervalMinutes: interval,
+      imap: get('IMAPHOST') ? { host: get('IMAPHOST')!, port: int(`${p}_IMAPPORT`, 993, env) } : null,
     });
   }
   return out;
@@ -381,12 +384,24 @@ export function loadConfig(env: Env = process.env) {
       /** Certificates expiring within this many days are a warning (within 7 days an error). */
       certWarnDays: int('CERT_WARN_DAYS', 21, env),
       httpTimeoutMs: int('HTTP_TIMEOUT_MS', 10_000, env),
+      /** Look up the registration (expiry, status) via RDAP; cached for a day per domain. */
+      rdap: bool('RDAP_CHECK', true, env),
+      /** Registration expiry warning (within 7 days an error). */
+      registrationWarnDays: int('REGISTRATION_WARN_DAYS', 30, env),
+      /** Query every nameserver directly (lame delegation, SOA serials). Needs outbound DNS to them. */
+      nsProbe: bool('NS_CHECK', true, env),
+      /** DNSSEC signatures expiring within this many days are a warning (see dnssec.ts). */
+      dnssecWarnDays: int('DNSSEC_SIG_WARN_DAYS', 3, env),
+      /** DKIM keys published longer than this are a warning (M3AAWG: rotate every 6-12 months); 0 = off. */
+      dkimMaxAgeDays: int('DKIM_KEY_MAX_AGE_DAYS', 365, env),
     },
     reports: {
       /** How often the report mailboxes are synced. 0 = manual / CLI only. */
       intervalMinutes: int('REPORT_SYNC_INTERVAL_MINUTES', 30, env),
       /** Report findings (and their alerts) look at this many days. */
       analysisDays: int('REPORT_ANALYSIS_DAYS', 7, env),
+      /** No report for this many days from a domain that normally gets some: alert; 0 = off. */
+      silentDays: int('REPORT_SILENT_DAYS', 3, env),
     },
     delivery: {
       intervalMinutes: interval,

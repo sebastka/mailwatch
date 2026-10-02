@@ -926,6 +926,320 @@ const results: CheckResult[] = [];
     ),
   );
 }
+// --- Domain and Sending (all three domains) ---------------------------------------------
+
+const ns = (zone: string, hosts: [string, string][], serial: number) =>
+  hosts.map(([host, ip]) => ({
+    host,
+    addresses: [ip],
+    probes: [{ host, ip, rcode: 'NOERROR', authoritative: true, serial }],
+  }));
+const registration = (domain: string, expiresInDays: number, status: string[] = ['client transfer prohibited']) => ({
+  domain,
+  server: 'https://rdap.example/',
+  fetchedAt: iso(now - 3 * 3_600_000),
+  status,
+  registrar: 'Example Registrar AS',
+  registered: iso(now - 4000 * DAY),
+  expires: iso(now + expiresInDays * DAY),
+  lastChanged: iso(now - 200 * DAY),
+  nameservers: ['ns1.dns.example', 'ns2.dns.example'],
+  delegationSigned: true,
+  error: null,
+});
+const nsHosts: [string, string][] = [
+  ['ns1.dns.example', '198.18.1.53'],
+  ['ns2.dns.example', '198.19.2.53'],
+];
+const reqs = (fail: string[] = [], unknown: string[] = []) =>
+  (
+    [
+      ['auth', 'SPF or DKIM passes', 'all'],
+      ['spf-and-dkim', 'SPF and DKIM both pass', 'bulk'],
+      ['fcrdns', 'Sending IPs have forward-confirmed reverse DNS', 'all'],
+      ['tls', 'Mail is transmitted over TLS', 'all'],
+      ['dmarc', 'A DMARC policy is published (p=none or stricter)', 'bulk'],
+      ['alignment', 'The From: domain is aligned (DMARC passes)', 'bulk'],
+      ['unsubscribe', 'Marketing mail has one-click unsubscribe', 'bulk'],
+      ['spam-rate', 'Spam complaint rate below 0.3 %', 'all'],
+    ] as const
+  ).map(([id, label, scope]) => ({
+    id,
+    label,
+    scope,
+    status: (id === 'unsubscribe'
+      ? 'n/a'
+      : id === 'spam-rate' || unknown.includes(id)
+        ? 'unknown'
+        : fail.includes(id)
+          ? 'fail'
+          : 'ok') as 'ok' | 'fail' | 'unknown' | 'n/a',
+    detail: fail.includes(id) ? 'seen at Gmail, Microsoft: fail' : 'seen at Gmail, Microsoft: pass',
+  }));
+const service = (svc: 'submission' | 'imap', host: string, port: number, days: number) => ({
+  service: svc,
+  host,
+  port,
+  tlsMode: 'implicit' as const,
+  connected: true,
+  banner: svc === 'imap' ? '* OK [CAPABILITY IMAP4rev1] ready' : `220 ${host} ESMTP`,
+  authBeforeTls: [],
+  tls: { ...probe(host, '192.0.2.1', { days }).tls!, protocol: 'TLSv1.3' },
+  error: null,
+});
+const srv = (domain: string, sub: string | null) => [
+  { name: `_submissions._tcp.${domain}`, target: sub, port: sub ? 465 : null, found: Boolean(sub) },
+  { name: `_submission._tcp.${domain}`, target: null, port: null, found: false },
+  {
+    name: `_imaps._tcp.${domain}`,
+    target: sub && sub.replace(/^smtp/, 'imap'),
+    port: sub ? 993 : null,
+    found: Boolean(sub),
+  },
+  { name: `_imap._tcp.${domain}`, target: null, port: null, found: false },
+];
+
+results.push(
+  result(
+    'example.com',
+    'domain',
+    [
+      f(
+        'ok',
+        'domain.registered',
+        `Registered until ${iso(now + 290 * DAY).slice(0, 10)}`,
+        'Example Registrar AS · client transfer prohibited',
+        [r('rfc9083', '4.5')],
+      ),
+      f(
+        'ok',
+        'domain.ns-ok',
+        '2 nameservers, all authoritative',
+        'ns1.dns.example, ns2.dns.example · serial 2026100201',
+        [r('rfc1034', '4.1')],
+      ),
+    ],
+    {
+      zone: 'example.com',
+      registration: registration('example.com', 290),
+      nameservers: ns('example.com', nsHosts, 2026100201),
+      probed: true,
+    },
+  ),
+  result(
+    'example.net',
+    'domain',
+    [
+      f(
+        'warning',
+        'domain.expiring',
+        'example.net expires in 19 days',
+        `Registered until ${iso(now + 19 * DAY).slice(0, 10)}. Make sure it renews (auto-renewal, payment method).`,
+        [r('rfc9083', '4.5')],
+      ),
+      f(
+        'warning',
+        'domain.serial-mismatch',
+        'The nameservers serve different versions of the zone',
+        'SOA serials 2026100201, 2026092801: a secondary is not updated, so changes (e.g. to SPF or DKIM) reach only part of the resolvers.',
+        [r('rfc1034', '4.3.5')],
+      ),
+    ],
+    {
+      zone: 'example.net',
+      registration: registration('example.net', 19),
+      nameservers: [
+        ...ns('example.net', nsHosts.slice(0, 1), 2026100201),
+        ...ns('example.net', nsHosts.slice(1), 2026092801),
+      ],
+      probed: true,
+    },
+  ),
+  result(
+    'shop.example.org',
+    'domain',
+    [
+      f(
+        'error',
+        'domain.lame',
+        'Nameserver ns2.dns.example is not authoritative for example.org',
+        '198.19.2.53 answered REFUSED: a lame delegation. Resolvers that pick it fail or time out.',
+        [r('rfc1912', '2.8')],
+        'ns2.dns.example 198.19.2.53',
+      ),
+      f('ok', 'domain.registered', `Registered until ${iso(now + 120 * DAY).slice(0, 10)}`, 'Example Registrar AS', [
+        r('rfc9083', '4.5'),
+      ]),
+    ],
+    {
+      zone: 'example.org',
+      registration: registration('example.org', 120),
+      nameservers: [
+        ...ns('example.org', nsHosts.slice(0, 1), 2026090101),
+        {
+          host: 'ns2.dns.example',
+          addresses: ['198.19.2.53'],
+          probes: [
+            { host: 'ns2.dns.example', ip: '198.19.2.53', rcode: 'REFUSED', authoritative: false, serial: null },
+          ],
+        },
+      ],
+      probed: true,
+    },
+  ),
+  result(
+    'example.com',
+    'senders',
+    [
+      f('ok', 'senders.ips-ok', '1 sending IP: reverse DNS and SPF pass', '192.0.2.10 (out.example.com)', [
+        r('rfc7208'),
+        r('gmail-senders'),
+      ]),
+      f(
+        'ok',
+        'senders.submission-ok',
+        'The submission server smtp.example.com:465: TLSv1.3, valid certificate',
+        `Valid until ${iso(now + 60 * DAY).slice(0, 10)}.`,
+        [r('rfc8314')],
+        'smtp.example.com:465',
+      ),
+      f(
+        'ok',
+        'senders.imap-ok',
+        'The IMAP server imap.example.com:993: TLSv1.3, valid certificate',
+        `Valid until ${iso(now + 60 * DAY).slice(0, 10)}.`,
+        [r('rfc8314')],
+        'imap.example.com:993',
+      ),
+      f(
+        'ok',
+        'senders.requirements',
+        'Gmail and Yahoo sender requirements met',
+        'As far as MailWatch can see: authentication, reverse DNS, TLS and DMARC.',
+        [r('gmail-senders'), r('yahoo-senders')],
+      ),
+    ],
+    {
+      envelopeDomain: 'example.com',
+      ips: [
+        {
+          ip: '192.0.2.10',
+          sources: ['delivery tests'],
+          ptr: 'out.example.com',
+          fcrdns: true,
+          spf: 'pass',
+          spfDetail: 'matched "ip4:192.0.2.0/24" in example.com',
+        },
+      ],
+      services: [service('submission', 'smtp.example.com', 465, 60), service('imap', 'imap.example.com', 993, 60)],
+      srv: srv('example.com', 'smtp.example.com'),
+      autoconfig: { url: 'https://autoconfig.example.com/mail/config-v1.1.xml', status: 200, error: null },
+      requirements: reqs(),
+    },
+  ),
+  result(
+    'example.net',
+    'senders',
+    [
+      f(
+        'warning',
+        'senders.spf-not-pass',
+        'SPF of example.net does not authorise 198.51.100.7 (softfail)',
+        'matched "~all" in example.net. DMARC then depends on DKIM alone for this IP.',
+        [r('rfc7208', '2.6')],
+        '198.51.100.7',
+      ),
+      f(
+        'info',
+        'senders.no-autoconfig',
+        'Mail clients cannot configure themselves',
+        'No SRV records (_submissions._tcp, _imaps._tcp, …) and no autoconfig file.',
+        [r('rfc6186', '3'), r('rfc8314', '5.1')],
+      ),
+      f(
+        'info',
+        'senders.requirements',
+        '1 Gmail/Yahoo sender requirement not met',
+        'SPF and DKIM both pass. The individual problems are reported (and alerted) by their own checks.',
+        [r('gmail-senders'), r('yahoo-senders')],
+      ),
+    ],
+    {
+      envelopeDomain: 'example.net',
+      ips: [
+        {
+          ip: '198.51.100.7',
+          sources: ['configured', 'delivery tests'],
+          ptr: 'mta7.mailer.example',
+          fcrdns: true,
+          spf: 'softfail',
+          spfDetail: 'matched "~all" in example.net',
+        },
+      ],
+      services: [service('submission', 'smtp.example.net', 465, 45)],
+      srv: srv('example.net', null),
+      autoconfig: {
+        url: 'https://autoconfig.example.net/mail/config-v1.1.xml',
+        status: null,
+        error: 'getaddrinfo ENOTFOUND',
+      },
+      requirements: reqs(['spf-and-dkim']),
+    },
+  ),
+  result(
+    'shop.example.org',
+    'senders',
+    [
+      f(
+        'error',
+        'senders.no-ptr',
+        'Sending IP 203.0.113.80 has no reverse DNS',
+        'Gmail, Yahoo and Microsoft require a PTR record for sending IPs and reject or spam-folder mail without one.',
+        [r('gmail-senders'), r('rfc1912', '2.1')],
+        '203.0.113.80',
+      ),
+      f(
+        'error',
+        'senders.auth-before-tls',
+        'The submission server offers PLAIN, LOGIN before STARTTLS',
+        'Clients may send the password unencrypted. Offer AUTH only after STARTTLS, or use implicit TLS on port 465.',
+        [r('rfc8314', '3.3'), r('rfc4954', '4')],
+        'mail.shop.example.org:587',
+      ),
+      f(
+        'info',
+        'senders.requirements',
+        '2 Gmail/Yahoo sender requirements not met',
+        'Sending IPs have forward-confirmed reverse DNS; The From: domain is aligned (DMARC passes).',
+        [r('gmail-senders'), r('yahoo-senders')],
+      ),
+    ],
+    {
+      envelopeDomain: 'shop.example.org',
+      ips: [
+        {
+          ip: '203.0.113.80',
+          sources: ['delivery tests'],
+          ptr: null,
+          fcrdns: false,
+          spf: 'pass',
+          spfDetail: 'matched "a" in shop.example.org',
+        },
+      ],
+      services: [
+        {
+          ...service('submission', 'mail.shop.example.org', 587, 12),
+          tlsMode: 'starttls' as const,
+          authBeforeTls: ['PLAIN', 'LOGIN'],
+        },
+      ],
+      srv: srv('shop.example.org', null),
+      autoconfig: { url: 'https://autoconfig.shop.example.org/mail/config-v1.1.xml', status: 404, error: null },
+      requirements: reqs(['fcrdns', 'alignment']),
+    },
+  ),
+);
+
 await store.saveCheckResults(results);
 
 // --- Record changes ------------------------------------------------------------------

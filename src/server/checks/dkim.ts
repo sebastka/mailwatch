@@ -1,5 +1,5 @@
 // DKIM key records (RFC 6376 §3.6.1), key algorithms and sizes (RFC 8301, RFC 8463).
-import { createPublicKey } from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import type { CheckResult, DkimData, DkimSelector, DkimSource, SpfData } from '../../shared/types.ts';
 import { answered } from '../dns.ts';
 import { type CheckContext, Findings, mapLimit, parseTags, ref, result } from './util.ts';
@@ -199,6 +199,18 @@ export async function checkDkim(ctx: CheckContext): Promise<CheckResult<DkimData
     },
   );
 
+  // Key age: DNS has no publication date, so a key is dated from the first check that saw it.
+  const before = new Map(
+    ((ctx.previous.get('dkim')?.data as DkimData | null | undefined)?.selectors ?? []).map((s) => [s.selector, s]),
+  );
+  for (const s of looked) {
+    const p = s.found && !s.revoked ? s.tags.p?.replace(/\s+/g, '') : undefined;
+    if (!p) continue;
+    s.keyHash = createHash('sha256').update(p).digest('hex').slice(0, 16);
+    const prev = before.get(s.selector);
+    s.keySince = (prev?.keyHash === s.keyHash && prev.keySince) || ctx.now.toISOString();
+  }
+
   const found = looked.filter((s) => s.found);
   for (const s of looked) {
     const subject = s.selector;
@@ -252,7 +264,18 @@ export async function checkDkim(ctx: CheckContext): Promise<CheckResult<DkimData
           refs: [ref('rfc6376', '3.6.1')],
         },
       );
-    } else if (!problems.some((p) => p.level !== 'info')) {
+    }
+    const ageDays = s.keySince ? Math.floor((ctx.now.getTime() - Date.parse(s.keySince)) / 86_400_000) : 0;
+    const old = !s.revoked && ctx.cfg.dkimMaxAgeDays > 0 && ageDays > ctx.cfg.dkimMaxAgeDays;
+    if (old) {
+      f.warning(
+        'dkim.old-key',
+        `Selector "${s.selector}": key unchanged for ${ageDays} days`,
+        `MailWatch first saw this key on ${s.keySince!.slice(0, 10)}. Rotate DKIM keys regularly (every 6–12 months): publish a new selector, sign with it, then revoke the old one (empty p=). Limit: DKIM_KEY_MAX_AGE_DAYS=${ctx.cfg.dkimMaxAgeDays}.`,
+        { subject, refs: [ref('m3aawg-dkim'), ref('rfc6376', '3.6.1')] },
+      );
+    }
+    if (!s.revoked && !old && !problems.some((p) => p.level !== 'info')) {
       f.ok(
         'dkim.ok',
         `Selector "${s.selector}": ${s.keyType === 'ed25519' ? 'Ed25519' : `${s.keyBits}-bit RSA`} key`,

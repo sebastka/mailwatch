@@ -3,6 +3,7 @@
 import type { Alert, CheckKind } from './types.ts';
 
 export const CHECK_LABEL: Record<CheckKind, string> = {
+  domain: 'Domain',
   mx: 'MX & SMTP',
   spf: 'SPF',
   dkim: 'DKIM',
@@ -12,6 +13,7 @@ export const CHECK_LABEL: Record<CheckKind, string> = {
   dane: 'DANE',
   bimi: 'BIMI',
   dnsbl: 'Blocklists',
+  senders: 'Sending',
 };
 
 /** The check an alert belongs to: check|<check>|<code>|<domain>|<subject>. */

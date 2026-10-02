@@ -184,6 +184,10 @@ test('DMARC analysis finds partly failing and unaligned sources', () => {
 const GMAIL = `Delivered-To: me@gmail.com
 Received: by 2002:a05:6a10:1234 with SMTP id x;
         Thu, 2 Oct 2026 03:04:05 -0700 (PDT)
+Received: from mail.example.com (mail.example.com. [192.0.2.10])
+        by mx.google.com with ESMTPS id y
+        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);
+        Thu, 2 Oct 2026 03:04:04 -0700 (PDT)
 ARC-Authentication-Results: i=1; mx.google.com;
        dkim=pass header.i=@example.com header.s=s1 header.b=abc;
        spf=pass (google.com: domain of bounce@example.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@example.com;
@@ -213,7 +217,15 @@ Subject: MailWatch delivery test 0123456789abcdef01234567
 
 test('recipient authentication results are read from Gmail and Outlook headers', () => {
   const g = parseProbeHeaders(GMAIL, 'example.com');
-  assert.deepEqual(g.auth, { spf: 'pass', dkim: 'pass', dmarc: 'pass', arc: null, compauth: null, scl: null });
+  assert.deepEqual(g.auth, {
+    spf: 'pass',
+    dkim: 'pass',
+    dmarc: 'pass',
+    arc: null,
+    compauth: null,
+    scl: null,
+    tls: true,
+  });
   assert.equal(g.clientIp, '192.0.2.10');
   assert.deepEqual(g.dkimSelectors, ['s1']);
 
@@ -225,6 +237,7 @@ test('recipient authentication results are read from Gmail and Outlook headers',
     arc: null,
     compauth: 'fail reason=000',
     scl: 6,
+    tls: null,
   });
   assert.equal(o.clientIp, '198.51.100.25');
 

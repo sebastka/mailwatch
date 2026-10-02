@@ -21,6 +21,7 @@ interface Tab {
 
 const TABS: Tab[] = [
   { path: '/', label: 'Overview' },
+  { path: '/domain', label: 'Domain', check: 'domain' },
   { path: '/mx', label: 'MX & SMTP', check: 'mx' },
   { path: '/spf', label: 'SPF', check: 'spf' },
   { path: '/dkim', label: 'DKIM', check: 'dkim' },
@@ -31,6 +32,7 @@ const TABS: Tab[] = [
   { path: '/dane', label: 'DANE', check: 'dane' },
   { path: '/bimi', label: 'BIMI', check: 'bimi' },
   { path: '/dnsbl', label: 'Blocklists', check: 'dnsbl' },
+  { path: '/senders', label: 'Sending', check: 'senders' },
   { path: '/delivery', label: 'Delivery' },
   { path: '/alerts', label: 'Alerts' },
   { path: '/status', label: 'Status' },

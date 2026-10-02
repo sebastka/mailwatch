@@ -1,6 +1,8 @@
 import type { CheckKind } from '../../shared/types.ts';
 
 export const CHECK_INTRO: Record<CheckKind, string> = {
+  domain:
+    'The registration of the domain (expiry, registry locks, via RDAP) and its nameservers: enough of them, on more than one network, all answering authoritatively with the same zone serial.',
   mx: 'The MX records, their addresses and reverse DNS, and the SMTP service on port 25 of every MX: STARTTLS, the TLS version and the certificate.',
   spf: 'The SPF record that lists the servers allowed to send for the domain, with its include tree and the DNS lookup limits receivers enforce.',
   dkim: 'DKIM public keys under the configured selectors, the selectors seen in DMARC reports and delivery tests, and common selectors. Selectors cannot be listed from DNS.',
@@ -12,5 +14,7 @@ export const CHECK_INTRO: Record<CheckKind, string> = {
     'The TLS-RPT record tells senders where to send daily reports about TLS failures when delivering to you. The reports received are analysed below.',
   dane: 'DANE pins the MX certificates in DNSSEC-signed TLSA records. Checked: DNSSEC on the domain and MX records, the TLSA records, and whether they match the certificates the MX hosts present.',
   bimi: 'BIMI shows a brand logo next to authenticated mail in supporting mailboxes. It requires DMARC enforcement.',
+  senders:
+    'The sending side: reverse DNS and SPF for the IPs the domain sends from, TLS of its own submission and IMAP servers, client autoconfiguration, and a summary of the Gmail and Yahoo sender requirements.',
   dnsbl: 'The MX hosts, the known sending IPs and the domain itself, looked up in DNS blocklists.',
 };

@@ -49,6 +49,8 @@ export class FakeDns extends DnsClient {
 export const checksConfig = () => ({
   ...loadConfig({ DB_PASSWORD: 'x' }).checks,
   smtpProbe: false,
+  rdap: false,
+  nsProbe: false,
   commonSelectors: ['default'],
   ipZones: [],
   domainZones: [],

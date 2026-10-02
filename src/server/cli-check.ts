@@ -12,7 +12,14 @@ const cfg = { ...config.checks, smtpProbe: config.checks.smtpProbe && !args.incl
 const names = args.filter((a) => !a.startsWith('--'));
 const domains = names.length
   ? names.map((name) => ({ name: name.toLowerCase(), dkimSelectors: [], senderIps: [] }))
-  : config.domains.map((d) => ({ name: d.name, dkimSelectors: d.dkimSelectors, senderIps: d.senderIps }));
+  : config.domains.map((d) => ({
+      name: d.name,
+      dkimSelectors: d.dkimSelectors,
+      senderIps: d.senderIps,
+      from: d.from,
+      submission: d.smtp ? { host: d.smtp.host, port: d.smtp.port, secure: d.smtp.secure } : null,
+      imap: d.imap,
+    }));
 if (!domains.length) {
   console.error('usage: npm run check-domain -- example.com [--json] [--no-smtp]  (or configure DOMAIN_<n>_NAME)');
   process.exit(2);

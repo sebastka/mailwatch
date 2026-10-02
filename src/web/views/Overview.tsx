@@ -7,7 +7,19 @@ import { LEVEL_ORDER } from '../levels.ts';
 import { ago, dateTime, plural } from '../format.ts';
 import { useAsync } from '../hooks.ts';
 
-const CHECKS: CheckKind[] = ['mx', 'spf', 'dkim', 'dmarc', 'mta-sts', 'tls-rpt', 'dane', 'bimi', 'dnsbl'];
+const CHECKS: CheckKind[] = [
+  'domain',
+  'mx',
+  'spf',
+  'dkim',
+  'dmarc',
+  'mta-sts',
+  'tls-rpt',
+  'dane',
+  'bimi',
+  'dnsbl',
+  'senders',
+];
 
 function cellText(c: DomainOverview['checks'][number]): string {
   if (c.level === 'error') return `${c.counts.error}`;
