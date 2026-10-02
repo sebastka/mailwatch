@@ -73,3 +73,6 @@ export function todayUtc(offsetDays = 0): string {
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
+
+/** Whole days from now until `s` (negative when past). */
+export const daysUntil = (s: string, now = Date.now()) => Math.floor((Date.parse(s) - now) / 86_400_000);

@@ -233,10 +233,10 @@ Not done (see "Ideas not implemented" at the end).
 
 ## UI
 
-### D18. Fourteen tabs
+### D18. Sixteen tabs
 
-- Overview · MX & SMTP · SPF · DKIM · DMARC · DMARC reports · MTA-STS · TLS-RPT · DANE · BIMI ·
-  Blocklists · Delivery · Alerts · Status. Tabs carry the number of domains with errors (red) or
+- Overview · Domain · MX & SMTP · SPF · DKIM · DMARC · DMARC reports · MTA-STS · TLS-RPT · DANE ·
+  BIMI · Blocklists · Sending · Delivery · Alerts · Status. Tabs carry the number of domains with errors (red) or
   warnings (yellow).
 - SMTP is part of "MX & SMTP" rather than its own tab, since the probes are of the MX hosts.
 - The TLS-RPT tab shows the record check and then **the tlsrpt dashboard** (KPIs, findings,
@@ -261,7 +261,14 @@ Not done (see "Ideas not implemented" at the end).
   "policy cannot be fetched" although senders get the policy. The private-address guard still
   applies to the public answers, and the URL host name is still used for SNI and the
   certificate check. No `dnsPolicy` or `hostAliases` workaround is needed in the deployment.
-- Port 25 probes never send `MAIL FROM`: banner, EHLO, STARTTLS, EHLO, QUIT.
+- Port 25 probes never send `MAIL FROM`: banner, EHLO, STARTTLS, EHLO, QUIT. The submission
+  and IMAP probes (Sending tab) never log in: greeting, EHLO, TLS, QUIT / LOGOUT.
+- RDAP (Domain tab) fetches the IANA bootstrap file once a day and each domain's registry
+  record at most once a day (an hour after a failure), with the same guard as MTA-STS; up to
+  three HTTPS redirects are followed, since some registries redirect to a regional server.
+- Nameserver checks send one SOA query per nameserver address directly to it (`NS_CHECK`).
+- Autoconfig fetches `https://autoconfig.<domain>/mail/config-v1.1.xml`, only for domains with
+  a submission or IMAP server configured.
 - Credentials are only ever read from the environment (plus the rotated OAuth2 refresh tokens
   in the database, D10). They are never sent to the browser.
 - Delivery tests on demand are an **editor** action, since they send real mail.
@@ -360,17 +367,91 @@ Copied from zdwatch:
 - **Difference from zdwatch:** the default `GITHUB_TOKEN` permission stays **read-only**
   (zdwatch: read and write). Both workflows declare the permissions they need.
 
+## More checks
+
+### D25. Domain tab: registration and nameservers ⚠️
+
+- **RDAP**, not WHOIS: RDAP is JSON with standard fields (RFC 9083) and a bootstrap registry
+  (RFC 9224); WHOIS output differs per registry. Its coverage is the catch: **.no (Norid) has
+  RDAP but publishes no expiry date**, and .dk, .de, .se and .me have no RDAP at all (info
+  findings: "check the renewal with the registrar"). .fr, .org, .com and most gTLDs work.
+- Results are kept for a day in the check result itself (no new table), and the last good one
+  is kept when a lookup fails, so an RDAP outage neither hides an upcoming expiry nor alerts
+  (`rdap-lookup-failed` is indeterminate like other failed lookups, D16).
+- Expiry: warning within `REGISTRATION_WARN_DAYS` (30), error within 7 days. `client hold` /
+  `server hold` and `pending delete` / `redemption period` are errors.
+- Nameservers: fewer than two is an error, one without an address an error, a different set at
+  the registry than in the zone a warning, all in one IPv4 /24 only info (anycast providers do
+  that legitimately). Each address is then queried directly, one attempt each: not
+  authoritative is an error (lame delegation), different SOA serials a warning. IPv6 timeouts
+  while IPv4 answers become a single info, as for the MX probes. The zone checked is the
+  organisational domain (`orgDomain`), so `mail.example.com` checks `example.com`.
+
+### D26. DNSSEC beyond "signed" (DANE tab)
+
+- The DANE tab already depends on DNSSEC, so the DNSSEC details went there rather than to a
+  tab of their own: DS records at the parent are matched against the zone's DNSKEYs (key tag
+  and digest computed locally, tested with the RFC 4034/4509 examples), deprecated algorithms
+  (RSAMD5, DSA, RSASHA1, GOST) and SHA-1-only DS records are flagged (RFC 8624).
+- **Signature expiry is relative to the validity period.** Online signers (Cloudflare and
+  others) sign with validity periods of one to two days and re-sign continuously, so "expires
+  in 20 hours" is normal there. A warning needs less than a quarter of the validity _and_ less
+  than `DNSSEC_SIG_WARN_DAYS` (3) left; under 6 hours or expired is an error. That catches a
+  signer that stopped re-signing without crying wolf on online signing.
+
+### D27. Sending tab ⚠️
+
+- One tab for "the domain as a sender": the IPs it sends from and the servers its users use.
+  Sending IPs are `DOMAIN_n_SENDER_IPS` plus the client IPs the delivery tests saw.
+- **SPF is evaluated, not just parsed:** a full `check_host()` (RFC 7208 §4–§7: all
+  mechanisms, macros, include/redirect, the 10-lookup and 2-void limits) for each sending IP
+  and the envelope domain of `DOMAIN_n_FROM`. A sending IP that fails SPF is an error;
+  softfail/neutral a warning.
+- Missing or non-confirmed reverse DNS of a sending IP is an **error**: Gmail, Yahoo and
+  Microsoft reject or junk such mail.
+- The submission server (`DOMAIN_n_SMTPHOST`) and a new optional `DOMAIN_n_IMAPHOST` are
+  checked for TLS version, certificate and name; AUTH PLAIN/LOGIN offered before STARTTLS is an
+  error (RFC 8314 §3.3, RFC 4954 §4); STARTTLS on 587 instead of implicit TLS only an info. On
+  first run this flagged a real case: Domeneshop's `smtp.domeneshop.no:587` offers
+  `AUTH PLAIN LOGIN` before STARTTLS.
+- SRV records (RFC 6186) and Thunderbird autoconfig are info-level: missing both means mail
+  clients cannot configure themselves. Outlook autodiscover is not checked (proprietary, and
+  usually served by Microsoft).
+- **The Gmail/Yahoo summary never alerts** (info or ok): each requirement it lists is already
+  a finding of its own check, and alerting twice would double every notification. It uses what
+  receivers saw in the delivery tests (SPF, DKIM, DMARC, and a new "received over TLS" from the
+  topmost `Received` header) when there are any. Without delivery tests, DKIM stays "unknown":
+  selectors cannot be listed from DNS, so "no key found" does not mean "not signed". Spam rate
+  and one-click unsubscribe cannot be seen from here and are listed as such.
+
+### D28. DKIM key age
+
+- DNS records carry no publication date, so a key's age is counted **from the first check
+  that saw it** (a hash of `p=` kept in the check result). After a fresh install every key is
+  "new"; the `dkim.old-key` warning (`DKIM_KEY_MAX_AGE_DAYS`, 365) can only appear a year
+  later, and its text says "first seen by MailWatch". A changed key under the same selector
+  starts a new age. M3AAWG recommends rotating at least every 6–12 months.
+
+### D29. REQUIRETLS and SMTPUTF8
+
+- Reported on the MX tab from the EHLO extensions already collected: ok when every MX offers
+  them, info otherwise. Neither is required, and almost no MX offers REQUIRETLS yet.
+
+### D30. Silent report pipelines
+
+- `dmarc-reports.silent` / `tls-reports.silent` (warning) when a domain had reports in the
+  last 30 days but none for `REPORT_SILENT_DAYS` (3) days: usually a full or broken mailbox, a
+  sync problem or a changed `rua=`. The report day (the period's start) is used rather than the
+  import time, so a resync does not reset it. A domain whose latest check shows no `rua=` any
+  more does not alert, since its silence is expected. Reporters send daily, so three days of
+  silence for an active domain is unusual; low-volume domains may need a higher value.
+
 ## Ideas not implemented
 
-- Client autoconfiguration records: SRV `_submission._tcp`/`_imaps._tcp` (RFC 6186), Thunderbird
-  autoconfig, Outlook autodiscover.
-- REQUIRETLS (RFC 8689) and SMTPUTF8 advertisement as findings (the extensions are already
-  listed).
-- Certificate and TLS checks of the **submission** server (`DOMAIN_n_SMTPHOST`) beyond "sending
-  works".
+- Outlook autodiscover (D27).
 - Probing IPv6 MX addresses from an IPv6-less host (they are listed as "not probed").
-- SPF `check_host()` evaluation of the source IPs in DMARC reports (the reports already carry
-  the receivers' SPF results).
+- SPF `check_host()` evaluation of the source IPs in DMARC reports (the evaluator exists, D27,
+  but the reports already carry the receivers' SPF results).
 - A Public Suffix List for organisational domains (the DMARCbis tree walk makes it unnecessary
   for policy discovery; the external-destination check uses a heuristic, see D22).
 - Other notification channels (webhook, e-mail, Slack/Teams), Prometheus metrics.

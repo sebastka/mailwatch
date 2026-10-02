@@ -2,7 +2,7 @@
 //   checks    every CHECK_INTERVAL_MINUTES: all DNS/server checks of every domain
 //   reports   every REPORT_SYNC_INTERVAL_MINUTES: report mailboxes, then report findings
 //   delivery  every minute: send due probes; every DELIVERY_POLL_SECONDS: search recipients
-import type { CheckResult, JobStatus } from '../shared/types.ts';
+import type { CheckResult, DmarcData, JobStatus, TlsRptData } from '../shared/types.ts';
 import type { Alerts } from './alerts.ts';
 import { newRun, type RunShared, runDomainChecks } from './checks/index.ts';
 import { recordSignature } from './checks/signature.ts';
@@ -10,7 +10,7 @@ import { mapLimit } from './checks/util.ts';
 import type { Config, DomainConfig } from './config.ts';
 import type { Store } from './db.ts';
 import type { Delivery } from './delivery.ts';
-import { reportFindings } from './reports/findings.ts';
+import { type Publishes, reportFindings } from './reports/findings.ts';
 import type { ReportSyncer } from './sync.ts';
 
 type Log = (msg: string) => void;
@@ -129,10 +129,23 @@ export class Monitor {
       this.store.probeFacts(d.name, 30),
     ]);
     const results = await runDomainChecks(
-      { name: d.name, dkimSelectors: d.dkimSelectors, senderIps: d.senderIps },
+      {
+        name: d.name,
+        dkimSelectors: d.dkimSelectors,
+        senderIps: d.senderIps,
+        from: d.from,
+        submission: d.smtp ? { host: d.smtp.host, port: d.smtp.port, secure: d.smtp.secure } : null,
+        imap: d.imap,
+      },
       this.cfg.checks,
       {
-        known: { reportSelectors, probeSelectors: facts.selectors, probeIps: facts.ips, monitoredAddresses },
+        known: {
+          reportSelectors,
+          probeSelectors: facts.selectors,
+          probeIps: facts.ips,
+          monitoredAddresses,
+          probeResults: facts.latest,
+        },
         previous,
         ...shared,
       },
@@ -168,6 +181,8 @@ export class Monitor {
               this.store,
               this.domains.map((d) => d.name),
               this.cfg.reports.analysisDays,
+              new Date(),
+              { silentDays: this.cfg.reports.silentDays, publishes: await this.publishes() },
             );
             await this.alerts.reports(findings);
             await this.syncAlerts();
@@ -179,6 +194,19 @@ export class Monitor {
       },
       (m) => this.log(`reports ${m}`),
     );
+  }
+
+  /** Whether each domain still asks for reports: a removed rua= makes the silence expected. */
+  private async publishes(): Promise<Publishes> {
+    const [dmarc, tls] = await Promise.all([
+      this.store.checkResults({ check: 'dmarc' }),
+      this.store.checkResults({ check: 'tls-rpt' }),
+    ]);
+    const has = (rs: CheckResult[]) =>
+      new Map(rs.map((r) => [r.domain, r.data ? ((r.data as DmarcData | TlsRptData).rua?.length ?? 0) > 0 : true]));
+    const d = has(dmarc);
+    const t = has(tls);
+    return (domain) => ({ dmarc: d.get(domain) ?? true, tls: t.get(domain) ?? true });
   }
 
   private async syncAlerts(): Promise<void> {

@@ -7,16 +7,31 @@ import { checkDane } from './dane.ts';
 import { checkDkim } from './dkim.ts';
 import { checkDmarc } from './dmarc.ts';
 import { checkDnsbl } from './dnsbl.ts';
+import { checkDomain } from './domain.ts';
 import { checkMtaSts } from './mtasts.ts';
 import { checkMx } from './mx.ts';
+import { checkSenders } from './senders.ts';
 import { checkSpf } from './spf.ts';
 import { ProbeCache } from './smtp.ts';
 import { checkTlsRpt } from './tlsrpt-record.ts';
 import { type CheckContext, type DomainCheckInput, type KnownFacts, Findings, result } from './util.ts';
 
-export const CHECK_ORDER: CheckKind[] = ['mx', 'spf', 'dkim', 'dmarc', 'mta-sts', 'tls-rpt', 'dane', 'bimi', 'dnsbl'];
+export const CHECK_ORDER: CheckKind[] = [
+  'domain',
+  'mx',
+  'spf',
+  'dkim',
+  'dmarc',
+  'mta-sts',
+  'tls-rpt',
+  'dane',
+  'bimi',
+  'dnsbl',
+  'senders',
+];
 
 const RUNNERS: Record<CheckKind, (ctx: CheckContext) => Promise<CheckResult>> = {
+  domain: checkDomain,
   mx: checkMx,
   spf: checkSpf,
   dkim: checkDkim,
@@ -26,6 +41,7 @@ const RUNNERS: Record<CheckKind, (ctx: CheckContext) => Promise<CheckResult>> = 
   dane: checkDane,
   bimi: checkBimi,
   dnsbl: checkDnsbl,
+  senders: checkSenders,
 };
 
 export const NO_FACTS: KnownFacts = { reportSelectors: [], probeSelectors: [], probeIps: [], monitoredAddresses: [] };

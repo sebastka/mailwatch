@@ -6,7 +6,8 @@ export type Level = 'ok' | 'info' | 'warning' | 'error';
 /** Alert severities: an "ok" finding never alerts. */
 export type Severity = 'info' | 'warning' | 'error';
 
-export type CheckKind = 'mx' | 'spf' | 'dkim' | 'dmarc' | 'mta-sts' | 'tls-rpt' | 'dane' | 'bimi' | 'dnsbl';
+export type CheckKind =
+  'domain' | 'mx' | 'spf' | 'dkim' | 'dmarc' | 'mta-sts' | 'tls-rpt' | 'dane' | 'bimi' | 'dnsbl' | 'senders';
 
 /** A document a finding is based on, e.g. { doc: 'rfc7208', section: '4.6.4' }. Keys of RFCS. */
 export interface RfcRef {
@@ -76,6 +77,8 @@ export interface SmtpProbe {
   banner: string | null;
   extensions: string[];
   starttls: boolean;
+  /** EHLO extensions offered before STARTTLS (AUTH there exposes passwords, RFC 8314). */
+  extensionsBeforeTls?: string[];
   tls: TlsInfo | null;
   error: string | null;
   durationMs: number;
@@ -152,6 +155,10 @@ export interface DkimSelector {
   testing: boolean;
   revoked: boolean;
   error: string | null;
+  /** Digest of the public key, to notice rotations. */
+  keyHash?: string | null;
+  /** When MailWatch first saw this key under this selector (the key may be older). */
+  keySince?: string | null;
 }
 
 export interface DkimData {
@@ -236,12 +243,138 @@ export interface DaneHost {
   unmatchedIps?: string[];
 }
 
+export interface DnssecSignature {
+  /** The RRset the signature covers, e.g. "SOA" at karlsen.fr. */
+  name: string;
+  type: string;
+  signer: string;
+  keyTag: number;
+  inception: string;
+  expiration: string;
+}
+
+export interface DnssecKey {
+  keyTag: number;
+  algorithm: number;
+  /** 257 = key-signing key (SEP), 256 = zone-signing key. */
+  flags: number;
+  /** A DS record at the parent matches this key. */
+  matchedByDs: boolean;
+}
+
+export interface DnssecDs {
+  keyTag: number;
+  algorithm: number;
+  digestType: number;
+  /** null: no DNSKEY with this key tag; false: key found but the digest differs. */
+  matches: boolean | null;
+}
+
 export interface DaneData {
   /** The MX answer was DNSSEC-validated. */
   mxSecure: boolean;
   /** The zone has DNSKEY records and validates (AD on the SOA). */
   zoneSigned: boolean;
   hosts: DaneHost[];
+  /** The zone apex the DNSSEC details are about. */
+  zone?: string;
+  keys?: DnssecKey[];
+  ds?: DnssecDs[];
+  signatures?: DnssecSignature[];
+}
+
+// --- Domain registration and nameservers -------------------------------------------------
+
+export interface RegistrationData {
+  /** The registered domain looked up (the organisational domain of a subdomain). */
+  domain: string;
+  server: string | null;
+  fetchedAt: string;
+  status: string[];
+  registrar: string | null;
+  registered: string | null;
+  expires: string | null;
+  lastChanged: string | null;
+  nameservers: string[];
+  delegationSigned: boolean | null;
+  error: string | null;
+}
+
+export interface NameserverProbe {
+  host: string;
+  ip: string;
+  /** NOERROR, REFUSED, TIMEOUT, … */
+  rcode: string;
+  authoritative: boolean;
+  serial: number | null;
+}
+
+export interface NameserverHost {
+  host: string;
+  addresses: string[];
+  probes: NameserverProbe[];
+}
+
+export interface DomainData {
+  /** The zone apex checked (the registered domain). */
+  zone: string;
+  registration: RegistrationData | null;
+  nameservers: NameserverHost[];
+  /** Whether nameservers were queried directly (NS_CHECK). */
+  probed: boolean;
+}
+
+// --- Sending ------------------------------------------------------------------------------
+
+export interface SenderIp {
+  ip: string;
+  sources: string[];
+  ptr: string | null;
+  fcrdns: boolean | null;
+  /** SPF result for this IP and the envelope domain (RFC 7208 check_host). */
+  spf: string | null;
+  spfDetail: string | null;
+}
+
+export interface ServiceProbe {
+  service: 'submission' | 'imap';
+  host: string;
+  port: number;
+  /** "implicit" TLS from the start, or "starttls". */
+  tlsMode: 'implicit' | 'starttls';
+  connected: boolean;
+  banner: string | null;
+  /** Mechanisms offered before TLS (should be none, RFC 8314). */
+  authBeforeTls: string[];
+  tls: TlsInfo | null;
+  error: string | null;
+}
+
+export interface SrvTarget {
+  name: string;
+  target: string | null;
+  port: number | null;
+  found: boolean;
+}
+
+export type RequirementStatus = 'ok' | 'fail' | 'unknown' | 'n/a';
+
+export interface SenderRequirement {
+  id: string;
+  label: string;
+  /** Gmail and Yahoo require it of all senders, or only of bulk senders (5000+ a day). */
+  scope: 'all' | 'bulk';
+  status: RequirementStatus;
+  detail: string;
+}
+
+export interface SendersData {
+  envelopeDomain: string | null;
+  ips: SenderIp[];
+  services: ServiceProbe[];
+  srv: SrvTarget[];
+  autoconfig: { url: string; status: number | null; error: string | null } | null;
+  requirements: SenderRequirement[];
 }
 
 export interface BimiData {
@@ -678,6 +811,8 @@ export interface ProbeAuth {
   compauth: string | null;
   /** Microsoft's spam confidence level, when exposed. */
   scl: number | null;
+  /** The recipient received the message over TLS (Received: … with ESMTPS); null when unknown. */
+  tls?: boolean | null;
 }
 
 export interface DeliveryProbe {

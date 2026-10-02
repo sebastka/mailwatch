@@ -6,7 +6,8 @@ import { isIP, isIPv6, connect as tcpConnect } from 'node:net';
 import { randomInt } from 'node:crypto';
 import * as packet from 'dns-packet';
 
-export type RecordType = 'A' | 'AAAA' | 'MX' | 'TXT' | 'CNAME' | 'PTR' | 'TLSA' | 'SOA' | 'DNSKEY' | 'NS' | 'CAA';
+export type RecordType =
+  'A' | 'AAAA' | 'MX' | 'TXT' | 'CNAME' | 'PTR' | 'TLSA' | 'SOA' | 'DNSKEY' | 'DS' | 'NS' | 'CAA' | 'SRV';
 
 export interface DnsResult<T> {
   name: string;
@@ -20,6 +21,21 @@ export interface DnsResult<T> {
   cnames: string[];
   /** Why no server answered (rcode TIMEOUT). */
   error?: string;
+  /** The answer came from a server authoritative for the name (AA flag). */
+  authoritative?: boolean;
+  /** RRSIG records over the answer (with the DO bit set). */
+  sigs?: RrsigRecord[];
+}
+
+export interface RrsigRecord {
+  name: string;
+  typeCovered: string;
+  algorithm: number;
+  keyTag: number;
+  signersName: string;
+  /** Seconds since the epoch. */
+  inception: number;
+  expiration: number;
 }
 
 export interface MxRecord {
@@ -134,14 +150,17 @@ function tcpQuery(server: { host: string; port: number }, name: string, type: Re
 export class DnsClient {
   private readonly servers: { host: string; port: number }[];
   private readonly timeoutMs: number;
+  private readonly rounds: number;
   private readonly cache = new Map<string, Promise<DnsResult<unknown>>>();
   /** Number of queries actually sent (for tests and logs). */
   queries = 0;
 
-  constructor(servers: string[], timeoutMs = 4000) {
+  /** `rounds`: how often each server is tried (2 helps against a lost UDP packet). */
+  constructor(servers: string[], timeoutMs = 4000, rounds = 2) {
     if (!servers.length) throw new Error('no DNS resolvers configured');
     this.servers = servers.map(splitServer);
     this.timeoutMs = timeoutMs;
+    this.rounds = rounds;
   }
 
   query<T = unknown>(rawName: string, type: RecordType): Promise<DnsResult<T>> {
@@ -158,8 +177,7 @@ export class DnsClient {
   /** Sends the question (no cache); overridden by the tests' fake resolver. */
   protected async lookup(name: string, type: RecordType): Promise<DnsResult<unknown>> {
     let lastError = 'no answer';
-    // Each server is tried once; a second round helps against a single lost UDP packet.
-    for (const server of [...this.servers, ...this.servers]) {
+    for (const server of Array.from({ length: this.rounds }, () => this.servers).flat()) {
       try {
         this.queries++;
         let res = await udpQuery(server, name, type, this.timeoutMs);
@@ -190,7 +208,21 @@ export class DnsClient {
     const records = answers
       .filter((a) => a.type === type && names.has(normalizeName(a.name)))
       .map((a) => convert(type, a.data));
-    return { name, type, rcode, secure: res.flag_ad, records, cnames };
+    const sigs = answers
+      .filter((a) => a.type === 'RRSIG' && names.has(normalizeName(a.name)))
+      .map((a) => {
+        const d = a.data as Omit<RrsigRecord, 'name'>;
+        return {
+          name: normalizeName(a.name),
+          typeCovered: String(d.typeCovered),
+          algorithm: d.algorithm,
+          keyTag: d.keyTag,
+          signersName: normalizeName(String(d.signersName)),
+          inception: d.inception,
+          expiration: d.expiration,
+        };
+      });
+    return { name, type, rcode, secure: res.flag_ad, records, cnames, authoritative: res.flag_aa, sigs };
   }
 
   // --- Typed helpers ---

@@ -31,6 +31,7 @@ async function demoConfig(): Promise<Config> {
       name: d.d,
       dkimSelectors: [],
       senderIps: [],
+      imap: null,
       smtp: senders.has(d.d) ? smtp : null,
       from: senders.has(d.d) ? `monitor@${d.d}` : null,
       sendIntervalMinutes: senders.has(d.d) ? 60 : 0,

@@ -7,16 +7,26 @@ import { buildTlsOverview } from './tls-analysis.ts';
 
 const day = (offset: number, now: Date) => new Date(now.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
 
+/** Which report addresses a domain publishes (from its latest checks); unknown domains count as publishing. */
+export type Publishes = (domain: string) => { dmarc: boolean; tls: boolean };
+
+/** Window in which a domain must have had reports before their absence is noticed. */
+const SILENT_LOOKBACK_DAYS = 30;
+
 export async function reportFindings(
   store: Store,
   domains: string[],
   days: number,
   now = new Date(),
+  opts: { silentDays?: number; publishes?: Publishes } = {},
 ): Promise<Map<string, Finding[]>> {
   const out = new Map<string, Finding[]>();
   const filters = { from: day(-(days - 1), now), to: day(0, now) };
+  const silentDays = opts.silentDays ?? 0;
+  const last = silentDays > 0 ? await store.lastReportDays(SILENT_LOOKBACK_DAYS) : null;
   for (const domain of domains) {
     const fs: Finding[] = [];
+    if (last) fs.push(...silentFindings(domain, last, silentDays, now, opts.publishes?.(domain)));
     const [dmarc, tls] = await Promise.all([
       store.loadDmarcReports({ ...filters, domain }),
       store.loadTlsReports({ ...filters, domain }),
@@ -83,6 +93,39 @@ export async function reportFindings(
       }
     }
     out.set(domain, fs);
+  }
+  return out;
+}
+
+/**
+ * A reporting pipeline that stopped: reports arrived in the last 30 days, but none for
+ * `silentDays` days. Usually a broken mailbox, a full quota, a lost rua= address or a sync
+ * problem; reports are sent daily, so a few days of silence is unusual for an active domain.
+ */
+function silentFindings(
+  domain: string,
+  last: { dmarc: Map<string, string>; tls: Map<string, string> },
+  silentDays: number,
+  now: Date,
+  publishes = { dmarc: true, tls: true },
+): Finding[] {
+  const out: Finding[] = [];
+  const cutoff = day(-silentDays, now);
+  const kinds = [
+    ['dmarc', 'dmarc-reports.silent', 'DMARC aggregate', 'rua= of the DMARC record', 'rfc7489', '7.2'],
+    ['tls', 'tls-reports.silent', 'TLS', 'rua= of the TLS-RPT record', 'rfc8460', '3'],
+  ] as const;
+  for (const [kind, code, what, where, doc, section] of kinds) {
+    const d = last[kind].get(domain.toLowerCase());
+    if (!d || d >= cutoff || !publishes[kind]) continue;
+    const ago = Math.round((Date.parse(day(0, now)) - Date.parse(d)) / 86_400_000);
+    out.push({
+      code,
+      level: 'warning',
+      title: `No ${what} reports for ${ago} days`,
+      detail: `The last report covers ${d}; before that, reports arrived regularly. Check the ${where}, the report mailbox (quota, credentials) and the Status tab. Threshold: REPORT_SILENT_DAYS=${silentDays}.`,
+      refs: [{ doc, section }],
+    });
   }
   return out;
 }

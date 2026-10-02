@@ -14,6 +14,7 @@ const domain = (port: number, pass = 'right'): DomainConfig => ({
   name: 'example.com',
   dkimSelectors: [],
   senderIps: [],
+  imap: null,
   smtp: { host: '127.0.0.1', port, secure: true, user: 'tester@example.com', pass, rejectUnauthorized: false },
   from: 'tester@example.com',
   sendIntervalMinutes: 60,

@@ -1106,6 +1106,27 @@ export class Store {
     return [...out];
   }
 
+  /**
+   * The most recent report day per domain within the last `days` days, for DMARC aggregate
+   * and TLS reports (a domain without reports in that window is missing).
+   */
+  async lastReportDays(days: number): Promise<{ dmarc: Map<string, string>; tls: Map<string, string> }> {
+    const [dmarc, tls] = await Promise.all([
+      this.pool.query<Row[]>(
+        `SELECT domain AS d, MAX(day) AS last FROM dmarc_reports
+         WHERE day >= UTC_DATE() - INTERVAL ? DAY GROUP BY domain`,
+        [days],
+      ),
+      this.pool.query<Row[]>(
+        `SELECT p.policy_domain AS d, MAX(r.day) AS last FROM tls_policies p JOIN tls_reports r ON r.id = p.report_ref
+         WHERE r.day >= UTC_DATE() - INTERVAL ? DAY GROUP BY p.policy_domain`,
+        [days],
+      ),
+    ]);
+    const map = (rows: Row[]) => new Map(rows.map((r) => [String(r.d).toLowerCase(), String(r.last).slice(0, 10)]));
+    return { dmarc: map(dmarc), tls: map(tls) };
+  }
+
   // --- DMARC failure reports ----------------------------------------------------------
 
   async insertFailureReport(r: NormalizedFailureReport & { key: string }, src: ReportSrc): Promise<boolean> {
@@ -1279,19 +1300,40 @@ export class Store {
   }
 
   /** DKIM selectors and client IPs seen in delivered probes of a sender domain. */
-  async probeFacts(sender: string, days: number): Promise<{ selectors: string[]; ips: string[] }> {
+  /**
+   * What the delivered probes of a sender domain tell the checks: DKIM selectors, sending IPs,
+   * and the latest delivered probe per recipient with the recipient's authentication results.
+   */
+  async probeFacts(
+    sender: string,
+    days: number,
+  ): Promise<{
+    selectors: string[];
+    ips: string[];
+    latest: { recipient: string; status: string; at: string; auth: ProbeAuth | null }[];
+  }> {
     const rows = await this.pool.query<Row[]>(
-      `SELECT dkim_selectors, client_ip FROM probes
-       WHERE sender = ? AND status IN ('inbox', 'spam') AND sent_at >= UTC_TIMESTAMP() - INTERVAL ? DAY`,
+      `SELECT recipient, status, sent_at, auth, dkim_selectors, client_ip FROM probes
+       WHERE sender = ? AND status IN ('inbox', 'spam') AND sent_at >= UTC_TIMESTAMP() - INTERVAL ? DAY
+       ORDER BY sent_at DESC`,
       [sender, days],
     );
     const sel = new Set<string>();
     const ips = new Set<string>();
+    const latest = new Map<string, { recipient: string; status: string; at: string; auth: ProbeAuth | null }>();
     for (const r of rows) {
       for (const s of json<string[]>(r.dkim_selectors, [])) sel.add(s.toLowerCase());
       if (r.client_ip) ips.add(r.client_ip);
+      if (!latest.has(r.recipient)) {
+        latest.set(r.recipient, {
+          recipient: r.recipient,
+          status: r.status,
+          at: iso(r.sent_at)!,
+          auth: json<ProbeAuth | null>(r.auth, null),
+        });
+      }
     }
-    return { selectors: [...sel], ips: [...ips] };
+    return { selectors: [...sel], ips: [...ips], latest: [...latest.values()] };
   }
 
   async purgeProbes(days: number): Promise<void> {

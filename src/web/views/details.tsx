@@ -7,13 +7,18 @@ import type {
   DmarcData,
   DmarcUri,
   DnsblData,
+  DomainData,
   MtaStsData,
   MxData,
+  SendersData,
+  ServiceProbe,
   SpfData,
   SpfNode,
   TlsRptData,
 } from '../../shared/types.ts';
+import { ALGORITHMS } from '../../shared/dnssec.ts';
 import { StatusPill } from '../components/ui.tsx';
+import { ago, dateTime, daysUntil } from '../format.ts';
 
 type DetailsProps = { data: unknown; domain: string };
 
@@ -212,6 +217,7 @@ export function DkimDetails({ data }: DetailsProps) {
             <th>Found via</th>
             <th>Key</th>
             <th>Flags</th>
+            <th title="When MailWatch first saw this key: DNS has no publication date">Key seen since</th>
             <th>Record</th>
           </tr>
         </thead>
@@ -238,6 +244,9 @@ export function DkimDetails({ data }: DetailsProps) {
                 {[s.testing && 't=y (testing)', s.tags.h && `h=${s.tags.h}`, s.tags.s && `s=${s.tags.s}`]
                   .filter(Boolean)
                   .join(', ') || <span className="muted">–</span>}
+              </td>
+              <td title={s.keySince ? dateTime(s.keySince) : undefined}>
+                {s.keySince ? s.keySince.slice(0, 10) : <span className="muted">–</span>}
               </td>
               <td className="mono" style={{ maxWidth: 360, overflowWrap: 'anywhere' }}>
                 {s.record ? (
@@ -417,6 +426,7 @@ export function DaneDetails({ data }: DetailsProps) {
           <Yes ok={d.mxSecure} />
         </dd>
       </dl>
+      {d.zone && (d.keys?.length || d.ds?.length) ? <DnssecDetails d={d} /> : null}
       {d.hosts.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
@@ -457,6 +467,91 @@ export function DaneDetails({ data }: DetailsProps) {
             </tbody>
           </table>
         </div>
+      )}
+    </>
+  );
+}
+
+const alg = (n: number) => ALGORITHMS[n] ?? `algorithm ${n}`;
+const DIGEST = ['', 'SHA-1', 'SHA-256', 'GOST', 'SHA-384'];
+
+function DnssecDetails({ d }: { d: DaneData }) {
+  return (
+    <>
+      <div className="subhead">DNSSEC of {d.zone}</div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Record</th>
+              <th className="num">Key tag</th>
+              <th>Algorithm</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(d.ds ?? []).map((x) => (
+              <tr key={`ds-${x.keyTag}-${x.digestType}`}>
+                <td>DS at the parent ({DIGEST[x.digestType] ?? `digest ${x.digestType}`})</td>
+                <td className="num mono">{x.keyTag}</td>
+                <td>{alg(x.algorithm)}</td>
+                <td>
+                  {x.matches === null ? (
+                    <span className="muted">no such key</span>
+                  ) : (
+                    <Yes ok={x.matches} yes="matches the key" no="digest differs" />
+                  )}
+                </td>
+              </tr>
+            ))}
+            {(d.keys ?? []).map((k) => (
+              <tr key={`key-${k.keyTag}-${k.flags}`}>
+                <td>DNSKEY ({k.flags === 257 ? 'key-signing' : 'zone-signing'})</td>
+                <td className="num mono">{k.keyTag}</td>
+                <td>{alg(k.algorithm)}</td>
+                <td>
+                  {k.matchedByDs ? (
+                    <StatusPill level="ok" text="trusted by DS" />
+                  ) : (
+                    <span className="muted">{k.flags === 257 ? 'no DS' : '–'}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {d.signatures && d.signatures.length > 0 && (
+        <>
+          <div className="subhead">Signatures</div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Covers</th>
+                  <th className="num">Key tag</th>
+                  <th>Signed</th>
+                  <th>Expires</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.signatures.map((x) => (
+                  <tr key={`${x.name}-${x.type}-${x.keyTag}`}>
+                    <td className="mono">
+                      {x.type} {x.name}
+                    </td>
+                    <td className="num mono">{x.keyTag}</td>
+                    <td title={dateTime(x.inception)}>{x.inception.slice(0, 16).replace('T', ' ')}</td>
+                    <td title={dateTime(x.expiration)}>
+                      {x.expiration.slice(0, 16).replace('T', ' ')}{' '}
+                      <span className="muted">({ago(x.expiration).replace(/ ago$/, '')})</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </>
   );
@@ -541,5 +636,258 @@ export function DnsblDetails({ data }: DetailsProps) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+export function DomainDetails({ data }: DetailsProps) {
+  const d = data as DomainData;
+  const r = d.registration;
+  return (
+    <>
+      <div className="subhead">Registration of {d.zone}</div>
+      {!r ? (
+        <div className="muted">Not looked up (RDAP_CHECK=false).</div>
+      ) : (
+        <dl className="kv">
+          <dt>Registrar</dt>
+          <dd>{r.registrar ?? <span className="muted">–</span>}</dd>
+          <dt>Registered</dt>
+          <dd>{r.registered?.slice(0, 10) ?? <span className="muted">–</span>}</dd>
+          <dt>Expires</dt>
+          <dd>
+            {r.expires ? (
+              <>
+                {r.expires.slice(0, 10)} <span className="muted">({daysUntil(r.expires)} days)</span>
+              </>
+            ) : (
+              <span className="muted">not published by the registry</span>
+            )}
+          </dd>
+          <dt>Last changed</dt>
+          <dd>{r.lastChanged?.slice(0, 10) ?? <span className="muted">–</span>}</dd>
+          <dt>Status</dt>
+          <dd className="mono">{r.status.join(', ') || <span className="muted">–</span>}</dd>
+          <dt>Delegation signed</dt>
+          <dd>
+            <Yes ok={r.delegationSigned} />
+          </dd>
+          <dt>Source</dt>
+          <dd className="muted">
+            {r.error ?? (
+              <>
+                <span className="mono">{r.server ?? 'no RDAP service'}</span>, fetched {ago(r.fetchedAt)}
+              </>
+            )}
+          </dd>
+        </dl>
+      )}
+      <div className="subhead">Nameservers</div>
+      {!d.nameservers.length ? (
+        <div className="muted">No NS records.</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nameserver</th>
+                <th>Address</th>
+                <th>Answer</th>
+                <th className="num">SOA serial</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.nameservers.flatMap((n) => {
+                const rows = n.probes.length
+                  ? n.probes
+                  : (n.addresses.length ? n.addresses : [null]).map((ip) => ({
+                      ip,
+                      rcode: null,
+                      authoritative: null,
+                      serial: null,
+                    }));
+                return rows.map((p, i) => (
+                  <tr key={`${n.host}-${p.ip ?? i}`}>
+                    <td className="mono">{i === 0 && n.host}</td>
+                    <td className="mono">{p.ip ?? <span className="muted">no address</span>}</td>
+                    <td>
+                      {p.rcode === null ? (
+                        <span className="muted">{d.probed ? '–' : 'not queried'}</span>
+                      ) : p.rcode === 'NOERROR' && p.authoritative ? (
+                        <StatusPill level="ok" text="authoritative" />
+                      ) : (
+                        <StatusPill
+                          level={p.rcode === 'NOERROR' ? 'error' : 'warning'}
+                          text={p.rcode === 'NOERROR' ? 'not authoritative' : p.rcode}
+                        />
+                      )}
+                    </td>
+                    <td className="num mono">{p.serial ?? <span className="muted">–</span>}</td>
+                  </tr>
+                ));
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+const REQ_LEVEL = { ok: 'ok', fail: 'error', unknown: 'info', 'n/a': 'info' } as const;
+
+function ServiceRow({ p }: { p: ServiceProbe }) {
+  return (
+    <tr>
+      <td>{p.service === 'submission' ? 'Submission' : 'IMAP'}</td>
+      <td className="mono">
+        {p.host}:{p.port}
+        <div className="muted">{p.tlsMode === 'implicit' ? 'implicit TLS' : 'STARTTLS'}</div>
+      </td>
+      <td className="mono" style={{ maxWidth: 260, overflowWrap: 'anywhere' }}>
+        {p.banner ?? <span className="muted">{p.error ?? '–'}</span>}
+        {p.authBeforeTls.length > 0 && <div className="muted">AUTH before TLS: {p.authBeforeTls.join(', ')}</div>}
+      </td>
+      <td className="mono">{p.tls?.protocol ?? <span className="muted">–</span>}</td>
+      <td>{p.tls?.chain[0] ? <Cert c={p.tls.chain[0]} /> : <span className="muted">–</span>}</td>
+      <td>
+        {p.tls ? (
+          <Yes ok={p.tls.authorized && p.tls.hostnameMatch} yes="valid" no="invalid" />
+        ) : (
+          <span className="muted">–</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+export function SendersDetails({ data }: DetailsProps) {
+  const d = data as SendersData;
+  return (
+    <>
+      <div className="subhead">Gmail / Yahoo sender requirements</div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Requirement</th>
+              <th>For</th>
+              <th>Status</th>
+              <th>Seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.requirements.map((r) => (
+              <tr key={r.id}>
+                <td>{r.label}</td>
+                <td className="small">{r.scope === 'all' ? 'all senders' : 'bulk senders'}</td>
+                <td>
+                  <StatusPill level={REQ_LEVEL[r.status]} text={r.status === 'fail' ? 'not met' : r.status} />
+                </td>
+                <td className="small" style={{ maxWidth: 420, overflowWrap: 'anywhere' }}>
+                  {r.detail}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="subhead">
+        Sending IPs {d.envelopeDomain && <span className="muted small">(SPF of {d.envelopeDomain})</span>}
+      </div>
+      {!d.ips.length ? (
+        <div className="muted">None known: configure DOMAIN_n_SENDER_IPS or delivery tests.</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>Seen via</th>
+                <th>Reverse DNS</th>
+                <th>Forward-confirmed</th>
+                <th>SPF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.ips.map((s) => (
+                <tr key={s.ip}>
+                  <td className="mono">{s.ip}</td>
+                  <td className="small">{s.sources.join(', ')}</td>
+                  <td className="mono">{s.ptr ?? <span className="muted">none</span>}</td>
+                  <td>
+                    <Yes ok={s.fcrdns} />
+                  </td>
+                  <td title={s.spfDetail ?? undefined}>
+                    {s.spf ? (
+                      <StatusPill
+                        level={
+                          s.spf === 'pass' ? 'ok' : s.spf === 'fail' || s.spf === 'permerror' ? 'error' : 'warning'
+                        }
+                        text={s.spf}
+                      />
+                    ) : (
+                      <span className="muted">–</span>
+                    )}
+                    {s.spfDetail && <div className="muted small">{s.spfDetail}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="subhead">Submission and IMAP servers</div>
+      {!d.services.length ? (
+        <div className="muted">None configured (DOMAIN_n_SMTPHOST, DOMAIN_n_IMAPHOST).</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Server</th>
+                <th>Greeting</th>
+                <th>TLS</th>
+                <th>Certificate</th>
+                <th>Valid</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.services.map((p) => (
+                <ServiceRow key={`${p.service}-${p.host}-${p.port}`} p={p} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="subhead">Client autoconfiguration</div>
+      <dl className="kv">
+        {d.srv.map((s) => (
+          <span key={s.name} style={{ display: 'contents' }}>
+            <dt className="mono">{s.name.split('.').slice(0, 2).join('.')}</dt>
+            <dd className="mono">
+              {s.found ? (
+                s.target === '.' ? (
+                  '. (service not offered)'
+                ) : (
+                  `${s.target}:${s.port}`
+                )
+              ) : (
+                <span className="muted">none</span>
+              )}
+            </dd>
+          </span>
+        ))}
+        {d.autoconfig && (
+          <>
+            <dt>autoconfig</dt>
+            <dd>
+              <span className="mono">{d.autoconfig.url}</span>{' '}
+              <span className="muted">{d.autoconfig.error ?? `HTTP ${d.autoconfig.status}`}</span>
+            </dd>
+          </>
+        )}
+      </dl>
+    </>
   );
 }

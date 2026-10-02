@@ -239,6 +239,39 @@ async function probeAll(ctx: CheckContext, f: Findings, data: MxData): Promise<v
     );
   }
   for (const p of data.smtp) if (!noLocalV6(p)) smtpFindings(ctx, f, p);
+  extensionFindings(
+    f,
+    data.smtp.filter((p) => p.connected && p.extensions.length),
+  );
+}
+
+/** Optional extensions worth knowing about: REQUIRETLS (RFC 8689) and SMTPUTF8 (RFC 6531). */
+export function extensionFindings(f: Findings, probes: SmtpProbe[]): void {
+  if (!probes.length) return;
+  const has = (p: SmtpProbe, ext: string) => p.extensions.some((e) => e.toUpperCase().split(/\s/)[0] === ext);
+  const hosts = (ps: SmtpProbe[]) => [...new Set(ps.map((p) => p.host))].join(', ');
+  for (const [ext, code, what, refs] of [
+    ['REQUIRETLS', 'smtp.requiretls', 'senders can require TLS for the whole delivery path', [ref('rfc8689', '4')]],
+    [
+      'SMTPUTF8',
+      'smtp.smtputf8',
+      'mail to internationalised (non-ASCII) addresses is accepted',
+      [ref('rfc6531', '3.2')],
+    ],
+  ] as const) {
+    const yes = probes.filter((p) => has(p, ext));
+    if (yes.length === probes.length) {
+      f.ok(code, `All MX hosts offer ${ext}`, `${hosts(yes)}: ${what}.`, { refs: [...refs] });
+    } else {
+      const no = probes.filter((p) => !has(p, ext));
+      f.info(
+        code,
+        yes.length ? `${ext} is offered by some MX hosts only` : `No MX host offers ${ext}`,
+        `Not offered by ${hosts(no)}. Optional: with it, ${what}.`,
+        { refs: [...refs] },
+      );
+    }
+  }
 }
 
 /** Port 25 connections over IPv6 often fail on the monitoring host rather than at the MX. */

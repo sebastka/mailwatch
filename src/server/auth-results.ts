@@ -86,6 +86,22 @@ const ipIn = (s: string): string | null =>
   /\b(?:client-ip|sender IP is|smtp\.remote-ip=)\s*=?\s*\[?([0-9a-f:.]{7,45})\]?/i.exec(s)?.[1] ?? null;
 
 /**
+ * Whether the recipient received the message over TLS. The hop that matters is the one from
+ * the sender's server: the Received header naming its IP, else the first one with a "from"
+ * clause. Providers add internal hops above it (Gmail: "by 2002:… with SMTP id"), so the
+ * topmost header is not it. Gmail writes "with ESMTPS … (version=TLS1_3 …)", Microsoft
+ * "with Microsoft SMTP Server (version=TLS1_2 …)". null when no such header is found.
+ */
+export function receivedOverTls(fields: [string, string][], clientIp?: string | null): boolean | null {
+  const received = fields.filter(([k]) => k.toLowerCase() === 'received').map(([, v]) => v);
+  const hop =
+    (clientIp ? received.find((v) => v.includes(`[${clientIp}]`) || v.includes(`(${clientIp})`)) : undefined) ??
+    received.find((v) => /^\s*from\s/i.test(v));
+  if (!hop) return null;
+  return /\bwith\s+(?:E?SMTPS|ESMTPSA|UTF8SMTPS)\b|version=TLS/i.test(hop);
+}
+
+/**
  * Reads the auth results the recipient's provider added. The topmost Authentication-Results
  * header is the one the receiving boundary added (RFC 8601 §5: headers are prepended).
  */
@@ -137,6 +153,7 @@ export function parseProbeHeaders(headerBlock: string, senderDomain: string): Pa
         ? `${compauth.result}${compauth.props.reason ? ` reason=${compauth.props.reason}` : ''}`
         : null,
       scl,
+      tls: receivedOverTls(fields, clientIp),
     },
     clientIp,
     dkimSelectors: [...selectors],

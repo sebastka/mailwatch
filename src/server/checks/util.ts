@@ -64,6 +64,20 @@ export interface DomainCheckInput {
   name: string;
   dkimSelectors: string[];
   senderIps: string[];
+  /** The address delivery tests are sent from (its domain is the SPF envelope domain). */
+  from?: string | null;
+  /** The submission server used for delivery tests, checked for TLS. */
+  submission?: { host: string; port: number; secure: boolean } | null;
+  /** The domain's IMAP server, checked for TLS. */
+  imap?: { host: string; port: number } | null;
+}
+
+/** The latest delivery test result to one recipient, as the recipient recorded it. */
+export interface ProbeFact {
+  recipient: string;
+  status: string;
+  at: string;
+  auth: import('../../shared/types.ts').ProbeAuth | null;
 }
 
 /** What the checks of a domain know besides DNS: selectors and IPs seen in reports and delivery tests. */
@@ -76,6 +90,8 @@ export interface KnownFacts {
   probeIps: string[];
   /** Mailboxes MailWatch reads, so report destinations can be marked as monitored. */
   monitoredAddresses: string[];
+  /** Latest delivery test per recipient sent from this domain (for the sender requirements). */
+  probeResults?: ProbeFact[];
 }
 
 export interface CheckContext {

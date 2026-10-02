@@ -11,6 +11,7 @@ import { CHECK_INTRO } from './check-intro.ts';
 import * as D from './details.tsx';
 
 const DETAILS: Record<CheckKind, ComponentType<{ data: unknown; domain: string }>> = {
+  domain: D.DomainDetails,
   mx: D.MxDetails,
   spf: D.SpfDetails,
   dkim: D.DkimDetails,
@@ -20,6 +21,7 @@ const DETAILS: Record<CheckKind, ComponentType<{ data: unknown; domain: string }
   dane: D.DaneDetails,
   bimi: D.BimiDetails,
   dnsbl: D.DnsblDetails,
+  senders: D.SendersDetails,
 };
 
 /** One card per domain: status, findings (OK ones collapsible) and the check's details. */

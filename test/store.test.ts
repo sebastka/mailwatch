@@ -339,6 +339,27 @@ describe('Store and alerts (MariaDB)', { skip: env.TEST_DB_HOST ? false : 'TEST_
     assert.deepEqual(await store.dmarcSelectors('example.com', 7), ['s1']);
   });
 
+  test('report findings notice a report pipeline that went silent', async () => {
+    await store.pool.query('DELETE FROM dmarc_reports');
+    const at = (daysAgo: number) =>
+      String(Date.parse(`${new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10)}T00:00:00Z`) / 1000);
+    const insert = async (daysAgo: number, id: string) => {
+      const xml = fixtureText('google-dmarc.xml').replace('1759276800', at(daysAgo));
+      await store.insertDmarcReport({ ...parseAggregate(xml), reportId: id }, xml, src);
+    };
+    await insert(10, 'old');
+    const silent = (opts = {}) =>
+      reportFindings(store, ['example.com'], 7, new Date(), { silentDays: 3, ...opts }).then((m) =>
+        m.get('example.com')!.map((x) => x.code),
+      );
+    assert.deepEqual(await silent(), ['dmarc-reports.silent']);
+    // Expected when the domain no longer asks for reports; off with REPORT_SILENT_DAYS=0.
+    assert.deepEqual(await silent({ publishes: () => ({ dmarc: false, tls: true }) }), []);
+    assert.deepEqual(await silent({ silentDays: 0 }), []);
+    await insert(1, 'recent');
+    assert.ok(!(await silent()).includes('dmarc-reports.silent'));
+  });
+
   test('record changes are logged with their signature', async () => {
     const a = result('a.example', 'spf', [], { records: ['v=spf1 -all'] });
     const b = result('a.example', 'spf', [], { records: ['v=spf1 mx -all'] });

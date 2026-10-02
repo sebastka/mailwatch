@@ -2,7 +2,7 @@
 // chain and the negotiated TLS version. It never sends MAIL FROM; the session ends with QUIT.
 import { connect as netConnect, type Socket } from 'node:net';
 import { checkServerIdentity, connect as tlsConnect, type DetailedPeerCertificate, type TLSSocket } from 'node:tls';
-import type { CertInfo, SmtpProbe } from '../../shared/types.ts';
+import type { CertInfo, SmtpProbe, TlsInfo } from '../../shared/types.ts';
 import { certInfo } from './util.ts';
 
 /** Reads SMTP replies (possibly multi-line, "250-…" then "250 …") from a socket. */
@@ -75,7 +75,25 @@ export interface ProbeOptions {
   timeoutMs: number;
   port?: number;
   now?: Date;
+  /** TLS from the first byte (submission on 465, RFC 8314) instead of STARTTLS. */
+  implicitTls?: boolean;
 }
+
+/** Protocol, cipher, WebPKI validation and the certificate chain of a TLS connection. */
+export function tlsInfoOf(tls: TLSSocket, host: string, now: Date): TlsInfo {
+  const peer = tls.getPeerCertificate(true);
+  return {
+    protocol: tls.getProtocol(),
+    cipher: tls.getCipher()?.name ?? null,
+    authorized: tls.authorized,
+    authorizationError: tls.authorized ? null : String(tls.authorizationError ?? 'not trusted'),
+    hostnameMatch: peer?.raw ? checkServerIdentity(host, peer) === undefined : false,
+    chain: peer?.raw ? chainOf(peer, now) : [],
+  };
+}
+
+/** Options that accept old protocols, so that they can be reported (RFC 8996) instead of failing. */
+export const LENIENT_TLS = { rejectUnauthorized: false, minVersion: 'TLSv1' as const, ciphers: 'DEFAULT:@SECLEVEL=0' };
 
 export async function probeSmtp(host: string, ip: string, opts: ProbeOptions): Promise<SmtpProbe> {
   const started = performance.now();
@@ -103,14 +121,17 @@ export async function probeSmtp(host: string, ip: string, opts: ProbeOptions): P
   const send = (line: string) => sock!.write(`${line}\r\n`);
   try {
     // Assigned before connecting, so that the deadline also cuts a connection attempt short.
-    const conn = netConnect({ host: ip, port });
+    const conn = opts.implicitTls
+      ? tlsConnect({ host: ip, port, servername: host, ...LENIENT_TLS })
+      : netConnect({ host: ip, port });
     sock = conn;
     await new Promise<void>((resolve, reject) => {
-      conn.once('connect', () => resolve());
+      conn.once(opts.implicitTls ? 'secureConnect' : 'connect', () => resolve());
       conn.once('error', reject);
       conn.once('close', () => reject(new Error(`no connection within ${Math.round(opts.timeoutMs / 1000)} s`)));
     });
     out.connected = true;
+    if (opts.implicitTls) out.tls = tlsInfoOf(conn as TLSSocket, host, opts.now ?? new Date());
     sock.on('error', (e) => reader.fail(e));
     sock.on('close', () => reader.fail(new Error('connection closed by the server')));
     reader.attach(sock);
@@ -123,6 +144,11 @@ export async function probeSmtp(host: string, ip: string, opts: ProbeOptions): P
     const ehlo = await reader.next();
     if (ehlo.code !== 250) throw new Error(`EHLO was refused: ${ehlo.code} ${ehlo.lines.join(' ')}`);
     out.extensions = ehlo.lines.slice(1).map((l) => l.trim().toUpperCase());
+    if (opts.implicitTls) {
+      send('QUIT');
+      return out;
+    }
+    out.extensionsBeforeTls = out.extensions;
     out.starttls = out.extensions.some((e) => e === 'STARTTLS' || e.startsWith('STARTTLS '));
     if (!out.starttls) {
       send('QUIT');
@@ -137,28 +163,12 @@ export async function probeSmtp(host: string, ip: string, opts: ProbeOptions): P
     plain.removeAllListeners('data');
     plain.removeAllListeners('close');
     const tls = await new Promise<TLSSocket>((resolve, reject) => {
-      const t = tlsConnect({
-        socket: plain,
-        servername: host,
-        rejectUnauthorized: false,
-        // Accept old protocols so that we can report them (RFC 8996) instead of failing.
-        minVersion: 'TLSv1',
-        ciphers: 'DEFAULT:@SECLEVEL=0',
-      });
+      const t = tlsConnect({ socket: plain, servername: host, ...LENIENT_TLS });
       t.once('secureConnect', () => resolve(t));
       t.once('error', reject);
     });
     sock = tls;
-    const peer = tls.getPeerCertificate(true);
-    const now = opts.now ?? new Date();
-    out.tls = {
-      protocol: tls.getProtocol(),
-      cipher: tls.getCipher()?.name ?? null,
-      authorized: tls.authorized,
-      authorizationError: tls.authorized ? null : String(tls.authorizationError ?? 'not trusted'),
-      hostnameMatch: peer?.raw ? checkServerIdentity(host, peer) === undefined : false,
-      chain: peer?.raw ? chainOf(peer, now) : [],
-    };
+    out.tls = tlsInfoOf(tls, host, opts.now ?? new Date());
 
     const r2 = new ReplyReader();
     r2.attach(tls);

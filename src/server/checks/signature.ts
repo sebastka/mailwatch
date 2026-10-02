@@ -6,6 +6,7 @@ import type {
   DaneData,
   DkimData,
   DmarcData,
+  DomainData,
   MtaStsData,
   MxData,
   SpfData,
@@ -22,6 +23,12 @@ export function recordSignature(r: CheckResult): string | null | undefined {
   if (d === null || d === undefined) return undefined;
   const lines = (xs: string[]) => (xs.length ? [...xs].sort().join('\n') : null);
   switch (r.check as CheckKind) {
+    case 'domain': {
+      // The delegation: the zone's NS records, and the registrar.
+      const x = d as DomainData;
+      const ns = x.nameservers.map((n) => `NS ${n.host}`);
+      return lines(x.registration?.registrar ? [...ns, `registrar ${x.registration.registrar}`] : ns);
+    }
     case 'mx': {
       const m = d as MxData;
       if (m.nullMx) return '0 .';
