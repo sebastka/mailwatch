@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import type { DmarcData, MxData, SpfData } from '../src/shared/types.ts';
 import { analyseKey, keyBits } from '../src/server/checks/dkim.ts';
-import { orgDomain, parseUris, related } from '../src/server/checks/dmarc.ts';
+import { addressProblem, orgDomain, parseUris, related } from '../src/server/checks/dmarc.ts';
 import { isRefusal } from '../src/server/checks/dnsbl.ts';
 import { tlsaMatchesCert } from '../src/server/checks/dane.ts';
 import { mxMatches, parsePolicy } from '../src/server/checks/mtasts.ts';
@@ -212,6 +212,40 @@ test('DMARC: a failed parent lookup is "unknown", not "no record"', async () => 
   assert.deepEqual(codes(r.get('dmarc')), ['dmarc.lookup-failed']);
 });
 
+test('DMARC: report addresses are validated (RFC 5322), e.g. "mailto:" twice', async () => {
+  const record =
+    'v=DMARC1; p=reject; rua=mailto:dmarc@domeneshop.no,mailto:mailto:rua@example.com; ruf=mailto:ruf@example.com';
+  const r = await checkWith(
+    dmarcZone(record, { 'example.com._report._dmarc.domeneshop.no TXT': ['v=DMARC1'] }),
+    'example.com',
+    {
+      known: { monitoredAddresses: ['ruf@example.com'] },
+    },
+  );
+  const d = r.get('dmarc')!;
+  const f = d.findings.find((x) => x.code === 'dmarc.invalid-uri')!;
+  assert.equal(f.level, 'warning');
+  assert.equal(f.subject, 'mailto:mailto:rua@example.com');
+  assert.match(f.detail, /"mailto:" appears twice/);
+  // The valid destination still counts: no "no rua" note, and the policy check is otherwise fine.
+  assert.ok(!codes(d).includes('dmarc.no-rua'));
+  assert.match(
+    d.findings.find((x) => x.code === 'dmarc.rua-unmonitored')!.detail,
+    /^Reports go to dmarc@domeneshop\.no\./,
+  );
+  assert.equal(d.level, 'warning');
+
+  assert.equal(addressProblem('rua@example.com'), null);
+  assert.equal(addressProblem('first.last+tag@example.com'), null);
+  assert.equal(addressProblem('"mailto:rua"@example.com'), null);
+  assert.match(addressProblem('mailto:rua@example.com')!, /local part/);
+  assert.match(addressProblem('a..b@example.com')!, /local part/);
+  assert.match(addressProblem('rua@example')!, /domain/);
+  const only = await checkWith(dmarcZone('v=DMARC1; p=reject; rua=mailto:mailto:rua@example.com'));
+  assert.ok(codes(only.get('dmarc')).includes('dmarc.no-rua'));
+  assert.match(only.get('dmarc')!.findings.find((x) => x.code === 'dmarc.no-rua')!.title, /No usable/);
+});
+
 test('DMARC report destinations in the same organisational domain need no authorisation', async () => {
   const r = await checkWith(dmarcZone('v=DMARC1; p=reject; rua=mailto:d@reports.example.com'), 'example.com');
   assert.equal((r.get('dmarc')!.data as DmarcData).rua[0]!.authorized, null);
@@ -220,6 +254,11 @@ test('DMARC report destinations in the same organisational domain need no author
   assert.equal(related('a.example.com', 'b.example.com'), true);
   const bad = parseUris('mailto:a%zz@example.com', []);
   assert.equal(bad.uris.length, 1);
+  assert.equal(
+    bad.uris[0]!.address,
+    'a%zz@example.com',
+    'an invalid %-escape does not crash the check; % is valid atext',
+  );
 });
 
 test('DKIM: configured selectors must exist; common ones are silent when absent', async () => {
@@ -295,13 +334,13 @@ test('small helpers', () => {
   assert.equal(related('example.com', 'example.net'), false);
   const u = parseUris('mailto:dmarc@Example.com!10m, https://r.example/x, nonsense', ['dmarc@example.com']);
   assert.deepEqual(
-    u.uris.map((x) => [x.scheme, x.address, x.domain, x.monitored]),
+    u.uris.map((x) => [x.scheme, x.address, x.domain, x.monitored, x.problem]),
     [
-      ['mailto', 'dmarc@example.com', 'example.com', true],
-      ['https', null, 'r.example', false],
+      ['mailto', 'dmarc@example.com', 'example.com', true, null],
+      ['https', null, 'r.example', false, null],
+      ['', null, null, false, 'not a URI (expected e.g. mailto:dmarc@example.com)'],
     ],
   );
-  assert.equal(u.errors.length, 1);
   assert.equal(isRefusal('127.255.255.254'), true);
   assert.equal(isRefusal('127.0.0.2'), false);
   assert.equal(reverseName('192.0.2.1', 'zen.spamhaus.org'), '1.2.0.192.zen.spamhaus.org');

@@ -31,6 +31,7 @@ export const SPECS: Record<string, SpecDoc> = {
   rfc3207: rfc(3207, 'SMTP Service Extension for Secure SMTP over TLS (STARTTLS)'),
   rfc4033: rfc(4033, 'DNS Security Introduction and Requirements (DNSSEC)'),
   rfc5321: rfc(5321, 'Simple Mail Transfer Protocol'),
+  rfc5322: rfc(5322, 'Internet Message Format'),
   rfc5782: rfc(5782, 'DNS Blacklists and Whitelists', 'Informational'),
   rfc5965: rfc(5965, 'An Extensible Format for Email Feedback Reports (ARF)'),
   rfc6376: rfc(6376, 'DomainKeys Identified Mail (DKIM) Signatures', 'Internet Standard'),
