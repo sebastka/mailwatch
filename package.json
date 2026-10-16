@@ -30,7 +30,7 @@
     "dns-packet": "^5.6.1",
     "fast-xml-parser": "^5.11.2",
     "fflate": "^0.8.3",
-    "hono": "^4.13.12",
+    "hono": "^4.13.13",
     "imapflow": "^2.2.1",
     "mailparser": "^3.9.37",
     "mariadb": "^3.5.4",
