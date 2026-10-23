@@ -34,7 +34,7 @@
     "imapflow": "^2.3.0",
     "mailparser": "^3.9.37",
     "mariadb": "^3.5.4",
-    "nodemailer": "^10.0.13",
+    "nodemailer": "^10.1.2",
     "openid-client": "^6.8.8"
   },
   "devDependencies": {
