@@ -14,7 +14,7 @@
 #
 # Images are pinned by digest (multi-arch index); Dependabot keeps them up to date.
 
-FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:393f63498dc3739e4a1cc9e618261927d74663ab023b96b38d29c57199702dc6 AS build
+FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:4f971dcdc1fdf59f9d3e84dbd529690c2d15f75ae898fb310acad9c12d7bbdf9 AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
@@ -22,12 +22,12 @@ COPY tsconfig.json tsconfig.server.json tsconfig.web.json vite.config.ts ./
 COPY src ./src
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:393f63498dc3739e4a1cc9e618261927d74663ab023b96b38d29c57199702dc6 AS prod-deps
+FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:4f971dcdc1fdf59f9d3e84dbd529690c2d15f75ae898fb310acad9c12d7bbdf9 AS prod-deps
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
-FROM dhi.io/node:26-alpine@sha256:7414bc798500cef3c2300e34a5582a775fc46d29569527dd62a216c15b12c60f AS runtime
+FROM dhi.io/node:26-alpine@sha256:016ab5fb31bc219dc1e73a0dcab4ace4e400ce1cbaf5d36fb93cca9e9fb8c26b AS runtime
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="mailwatch" \
       org.opencontainers.image.description="Monitoring dashboard for e-mail DNS and server setup, DMARC and TLS reports, and delivery tests" \
