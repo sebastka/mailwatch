@@ -31,7 +31,7 @@
     "fast-xml-parser": "^5.11.2",
     "fflate": "^0.8.3",
     "hono": "^4.13.13",
-    "imapflow": "^2.5.2",
+    "imapflow": "^2.9.1",
     "mailparser": "^3.9.37",
     "mariadb": "^3.5.4",
     "nodemailer": "^10.1.2",
