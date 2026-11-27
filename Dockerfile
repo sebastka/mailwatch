@@ -14,7 +14,7 @@
 #
 # Images are pinned by digest (multi-arch index); Dependabot keeps them up to date.
 
-FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:a1cc76e0d8ddd12fbf76a45a573cbf4fe20c261830ae602a1c5d0ab334a39263 AS build
+FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:4c2fc73a207122c31ee9dced3a3c4caa79da632058293f7c997bc695ea7db3b8 AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
@@ -22,7 +22,7 @@ COPY tsconfig.json tsconfig.server.json tsconfig.web.json vite.config.ts ./
 COPY src ./src
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:a1cc76e0d8ddd12fbf76a45a573cbf4fe20c261830ae602a1c5d0ab334a39263 AS prod-deps
+FROM --platform=$BUILDPLATFORM dhi.io/node:26-alpine-dev@sha256:4c2fc73a207122c31ee9dced3a3c4caa79da632058293f7c997bc695ea7db3b8 AS prod-deps
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --ignore-scripts --no-audit --no-fund
